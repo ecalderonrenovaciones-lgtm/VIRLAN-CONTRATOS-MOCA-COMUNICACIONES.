@@ -56,9 +56,23 @@ Tabla de líneas (encabezados en fila 15, datos desde fila 16):
     SOLO si el nombre del Plan tarifario trae el sufijo "CTRL" (regla
     confirmada por el usuario; precio fijo de $50).
   Y Pago total mensual unitario = número del plan (299/399/.../1499,
-    extraído del nombre del Plan tarifario) + 50 si aplica Addon CTRL.
+    extraído del nombre del Plan tarifario) + 50 si aplica Addon CTRL; si
+    la línea matchea un movimiento de la oferta comercial (ver abajo), el
+    plan y el Addon CTRL se multiplican antes por (1 - %DMR).
   Fila 31 (Total a Pagar) ya trae la fórmula =SUM(Y16:Y30) en el machote:
     basta con llenar Y correctamente, no hace falta tocarla.
+Oferta comercial (PDF "Formato de Autorizaciones Especiales", opcional,
+ver oferta_comercial_extractor.py) — cuando llega adjunta al correo, es la
+fuente más autorizada para (descubierto 2026-09-22 con un caso real):
+  G12 Folio de Autorización = "FOLIO DE PRODUCTO" del PDF (reemplaza el
+      folio fijo de `_folio_autorizacion`).
+  Meses Gratis (shapes "Rectangle 4"/"Rectangle 9"/"Rectangle 10" en
+      J12/K12/L12) = los 3 números de "MESES DE RENTA GRATIS".
+  Por línea, si matchea un movimiento (mismo plan + equipo, ver
+      `buscar_movimiento_para_linea`): O Descuento multilínea unitario =
+      "%DMR"; K Pago inicial/Diferencial de equipo = el monto "$... sin
+      IVA c/u" (tiene prioridad sobre la lista de precios y sobre 'Costo
+      de Equipo' de control de renovación).
 Observaciones (celdas C35:C37, " PLAN <número>: REDES: ... STREAMING: ..."):
 'REDES SOCIALES' y 'STREAMING' de SAE 2.2.xlsx varían por plan tarifario
 (regla confirmada por el usuario), así que se escribe una fila por cada
@@ -66,9 +80,9 @@ combinación de plan distinta presente en el cliente (máximo 3, las únicas
 filas libres que deja el machote antes de la tabla de Abrev./Addón).
 Firma del suscriptor (shape 'TextBox 5'): siempre el Representante Legal
 del cliente (ficha .docx), nunca el nombre reciclado del machote.
-Las columnas que aún no tienen fórmula identificada (O Descuento
-multilínea, Q Addon's de datos, V Protección de equipo, X Otros servicios)
-y "Meses Gratis" se dejan como "N/A" / en blanco."""
+Las columnas que aún no tienen fórmula identificada fuera de la oferta
+comercial (Q Addon's de datos, V Protección de equipo, X Otros servicios)
+se dejan como "N/A"."""
 
 from __future__ import annotations
 
@@ -85,6 +99,7 @@ from .catalogo_precios import EquipoNoEncontradoError as PrecioNoEncontradoError
 from .catalogo_precios import buscar_precio_lista
 from .ladas_lookup import LadaNoEncontradaError, ciudad_dn_por_telefono
 from .models import ClienteContrato
+from .oferta_comercial_extractor import OfertaComercial, buscar_movimiento_para_linea
 
 _ADDON_CTRL_PRECIO = 50
 _HOJA = "OP_OK"
@@ -102,6 +117,10 @@ _CHECKBOX_TIPO_VENTA = {
 }
 
 _TEXTBOX_FIRMA_SUSCRIPTOR = "TextBox 5"
+
+# 3 shapes (no celdas — mismo caso que los checkboxes de Tipo de Venta) que
+# muestran los "Meses Gratis" en J12/K12/L12, de izquierda a derecha.
+_SHAPES_MESES_GRATIS = ["Rectangle 4", "Rectangle 9", "Rectangle 10"]
 
 # El número del plan es el monto que sigue a "Negocios" en el nombre del
 # plan tarifario, pero a veces trae un "$" u otro separador de por medio
@@ -292,6 +311,7 @@ def llenar_op(
     tipo_venta: str = "RENOVACION",
     lista_precios_xlsx: str | Path | None = None,
     calculo_mpe_xlsx: str | Path | None = None,
+    oferta_comercial: OfertaComercial | None = None,
 ) -> ResultadoOP:
     """Copia machote_xlsx a salida_xlsx y lo llena con los datos del cliente.
     Requiere Excel instalado (usa win32com para preservar las formas de los
@@ -323,10 +343,21 @@ def llenar_op(
             )
             _set_con_ajuste(ws, "S12", _domicilio_entrega(cliente))
 
-            folio_autorizacion, alerta_folio = _folio_autorizacion(cliente)
+            if oferta_comercial and oferta_comercial.folio_producto:
+                folio_autorizacion = oferta_comercial.folio_producto
+            else:
+                folio_autorizacion, alerta_folio = _folio_autorizacion(cliente)
+                if alerta_folio:
+                    resultado.alertas.append(alerta_folio)
             ws.Range("G12").Value = folio_autorizacion
-            if alerta_folio:
-                resultado.alertas.append(alerta_folio)
+
+            for nombre_shape in _SHAPES_MESES_GRATIS:
+                ws.Shapes(nombre_shape).TextFrame2.TextRange.Text = ""
+            if oferta_comercial and len(oferta_comercial.meses_renta_gratis) == 3:
+                for nombre_shape, mes in zip(
+                    _SHAPES_MESES_GRATIS, oferta_comercial.meses_renta_gratis
+                ):
+                    ws.Shapes(nombre_shape).TextFrame2.TextRange.Text = str(mes)
 
             for nombre_shape in _CHECKBOX_TIPO_VENTA.values():
                 ws.Shapes(nombre_shape).TextFrame2.TextRange.Text = ""
@@ -384,13 +415,34 @@ def llenar_op(
 
                 numero_plan = _numero_plan(linea.plan_tarifario)
                 es_ctrl = _es_addon_ctrl(linea.plan_tarifario)
+
+                mov_oferta = None
+                if oferta_comercial:
+                    mov_oferta = buscar_movimiento_para_linea(
+                        linea.modelo, numero_plan, oferta_comercial.movimientos
+                    )
+
+                # Descuento multilínea unitario (OP col O) = "%DMR" de la
+                # oferta comercial cuando la línea matchea un movimiento de
+                # ese PDF; ese mismo % descuenta también el plan base y el
+                # Addon CTRL en 'Pago total mensual unitario' (regla
+                # descubierta 2026-09-22 comparando EJEMPLO 2 de OP con PDF
+                # de oferta: plan*[1-DMR%] + Addon CTRL*[1-DMR%] = Pago
+                # total mensual unitario; verificado exacto en 4 líneas).
+                factor_dmr = 1.0
+                if mov_oferta is not None:
+                    ws.Range(f"O{fila}").Value = f"{mov_oferta.dmr_pct:g}%"
+                    factor_dmr = 1 - mov_oferta.dmr_pct / 100
+
+                servicio_adicional = 0.0
                 if es_ctrl:
+                    servicio_adicional = round(_ADDON_CTRL_PRECIO * factor_dmr, 2)
                     ws.Range(f"P{fila}").Value = "X"
-                    ws.Range(f"S{fila}").Value = _ADDON_CTRL_PRECIO
+                    ws.Range(f"S{fila}").Value = servicio_adicional
 
                 if numero_plan is not None:
-                    ws.Range(f"Y{fila}").Value = numero_plan + (
-                        _ADDON_CTRL_PRECIO if es_ctrl else 0
+                    ws.Range(f"Y{fila}").Value = round(
+                        numero_plan * factor_dmr + servicio_adicional, 2
                     )
                 else:
                     resultado.alertas.append(
@@ -425,16 +477,35 @@ def llenar_op(
                 else:
                     ws.Range(f"J{fila}").Value = "N/A"
 
-                # PIE (Pago inicial/Diferencial de equipo, OP col K): la
-                # lista de precios (columna de plan+plazo) es la fuente
-                # correcta (ver catalogo_precios._columna_diferencial);
-                # 'Costo de Equipo' de control de renovación solo se usa de
-                # respaldo si no se pudo determinar por lista de precios, y
-                # si ambas fuentes existen pero difieren se alerta (regla
-                # corregida 2026-09-22 tras error de captura detectado por
-                # el usuario en control de renovación para esta línea).
+                # PIE (Pago inicial/Diferencial de equipo, OP col K):
+                # prioridad 1) la oferta comercial (PDF "Formato de
+                # Autorizaciones Especiales"), el monto "$... sin IVA c/u"
+                # ya negociado — la fuente más autorizada cuando existe
+                # (descubierto 2026-09-22: coincide exacto con 'Costo de
+                # Equipo' de control de renovación en un caso real, lo que
+                # confirma que ese campo se llena desde el mismo documento
+                # cuando lo hay); 2) si no hay oferta comercial o la línea
+                # no matcheó ningún movimiento, la lista de precios
+                # (columna de plan+plazo, ver
+                # catalogo_precios._columna_diferencial); 3) 'Costo de
+                # Equipo' de control de renovación solo de último respaldo.
+                # Si dos fuentes disponibles difieren, se alerta en vez de
+                # elegir en silencio.
                 pie = 0.0
-                if diferencial_lista is not None and diferencial_lista > 0:
+                if mov_oferta is not None:
+                    pie = mov_oferta.precio_unitario_sin_iva
+                    ws.Range(f"K{fila}").Value = pie
+                    if linea.costo_equipo is not None and abs(linea.costo_equipo - pie) > 1:
+                        resultado.alertas.append(
+                            f"'Pago inicial/Diferencial de equipo' de la oferta "
+                            f"comercial (${pie:,.2f}) no coincide con 'Costo de "
+                            f"Equipo' de control de renovación "
+                            f"(${linea.costo_equipo:,.2f}) para la línea "
+                            f"{linea.telefono}; se usó el valor de la oferta "
+                            f"comercial (documento formal, fuente más autorizada). "
+                            f"Verificar manualmente."
+                        )
+                elif diferencial_lista is not None and diferencial_lista > 0:
                     pie = diferencial_lista
                     ws.Range(f"K{fila}").Value = pie
                     if (
@@ -496,14 +567,26 @@ def llenar_op(
                     ws.Range(f"{col}{fila_sobrante}").Value = None
 
             if resultado.lineas_escritas:
-                resultado.alertas.append(
-                    "Descuento multilínea, Addon's de datos, Protección de "
-                    "equipo y Otros servicios se dejaron como 'N/A' (todavía "
-                    "no se identificó su fórmula/fuente) — completar "
-                    "manualmente si aplican. Precio de lista, Cuotas, MPE, "
-                    "Pago inicial, Addon CTRL y Pago total mensual sí se "
-                    "calcularon automáticamente: verificar que tengan sentido."
-                )
+                if oferta_comercial and oferta_comercial.movimientos:
+                    resultado.alertas.append(
+                        "Addon's de datos, Protección de equipo y Otros "
+                        "servicios se dejaron como 'N/A' (todavía no se "
+                        "identificó su fórmula/fuente) — completar manualmente "
+                        "si aplican. Precio de lista, Cuotas, MPE, Pago inicial, "
+                        "Descuento multilínea, Addon CTRL y Pago total mensual "
+                        "sí se calcularon automáticamente (usando la oferta "
+                        "comercial donde matcheó): verificar que tengan sentido."
+                    )
+                else:
+                    resultado.alertas.append(
+                        "Descuento multilínea, Addon's de datos, Protección de "
+                        "equipo y Otros servicios se dejaron como 'N/A' (todavía "
+                        "no se identificó su fórmula/fuente, o no llegó oferta "
+                        "comercial) — completar manualmente si aplican. Precio "
+                        "de lista, Cuotas, MPE, Pago inicial, Addon CTRL y Pago "
+                        "total mensual sí se calcularon automáticamente: "
+                        "verificar que tengan sentido."
+                    )
 
             wb.Save()
         finally:

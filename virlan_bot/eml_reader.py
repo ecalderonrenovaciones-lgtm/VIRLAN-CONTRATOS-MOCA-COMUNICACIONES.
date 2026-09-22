@@ -28,6 +28,7 @@ class AdjuntosCorreo:
     sae_xlsx: Path | None = None
     control_renovacion_xlsx: Path | None = None
     vinculacion_xlsx: Path | None = None
+    oferta_comercial_pdf: Path | None = None
     otros: list[Path] = None
 
     def __post_init__(self):
@@ -39,6 +40,11 @@ _PATRONES = {
     "sae_xlsx": re.compile(r"^\d*\s*SAE", re.I),
     "control_renovacion_xlsx": re.compile(r"control\s*de\s*renovaci[oó]n", re.I),
     "vinculacion_xlsx": re.compile(r"vinculaci[oó]n", re.I),
+    # Nombre del archivo no es fijo (se genera ad-hoc por deal, ej.
+    # 'PdfPropuestaComercial PDF CORPORATIVO EN F FARMACIA.pdf'), así que
+    # el patrón por nombre es un intento best-effort; si no matchea, hay
+    # un respaldo por contenido más abajo (busca el texto fijo del PDF).
+    "oferta_comercial_pdf": re.compile(r"propuesta|oferta\s*comercial", re.I),
 }
 
 
@@ -71,6 +77,22 @@ def extraer_adjuntos(eml_path: str | Path, destino_dir: str | Path) -> AdjuntosC
             asignado = True
         if not asignado:
             resultado.otros.append(destino)
+
+    if resultado.oferta_comercial_pdf is None:
+        for candidato in list(resultado.otros):
+            if candidato.suffix.lower() != ".pdf":
+                continue
+            try:
+                import fitz
+
+                with fitz.open(candidato) as doc:
+                    texto = doc[0].get_text() if doc.page_count else ""
+            except Exception:
+                continue
+            if "Formato de Autorizaciones Especiales" in texto:
+                resultado.oferta_comercial_pdf = candidato
+                resultado.otros.remove(candidato)
+                break
 
     faltantes = [
         campo

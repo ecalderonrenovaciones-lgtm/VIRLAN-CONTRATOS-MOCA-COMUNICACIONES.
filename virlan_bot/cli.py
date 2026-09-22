@@ -25,6 +25,7 @@ from .contrato_valores import construir_valores_contrato
 from .eml_reader import extraer_adjuntos
 from .ficha_extractor import extraer_ficha
 from .models import DatosIncompletosError
+from .oferta_comercial_extractor import extraer_oferta_comercial
 from .op_filler import llenar_op
 from .op_to_pdf import exportar_op_a_pdf
 from .renovacion_extractor import extraer_lineas_renovacion
@@ -114,6 +115,17 @@ def procesar(eml_path: str, tipo_venta: str | None, persona_autorizada: str | No
             "Ciudad DN quedará en blanco en la OP."
         )
 
+    oferta_comercial = None
+    if adjuntos.oferta_comercial_pdf:
+        oferta_comercial = extraer_oferta_comercial(adjuntos.oferta_comercial_pdf)
+        if not oferta_comercial.folio_producto and not oferta_comercial.movimientos:
+            cliente.agregar_alerta(
+                f"Se encontró un adjunto de oferta comercial "
+                f"('{adjuntos.oferta_comercial_pdf.name}') pero no se pudo "
+                f"extraer ni el folio de producto ni los movimientos; "
+                f"revisar el formato del PDF manualmente."
+            )
+
     op_xlsx = carpeta_salida / "op_borrador.xlsx"
     op_pdf = carpeta_salida / "op_borrador.pdf"
     resultado_op = llenar_op(
@@ -124,6 +136,7 @@ def procesar(eml_path: str, tipo_venta: str | None, persona_autorizada: str | No
         tipo_venta=tipo_venta_op,
         lista_precios_xlsx=lista_precios,
         calculo_mpe_xlsx=calculo_mpe,
+        oferta_comercial=oferta_comercial,
     )
     exportar_op_a_pdf(op_xlsx, op_pdf)
 
