@@ -1,15 +1,24 @@
-"""Extrae los adjuntos de un correo .eml a una carpeta y los identifica por
-nombre de archivo, según el patrón observado en los correos reales del
-cliente (ficha .docx, SAE 2.2.xlsx, control de renovacion.xlsx, LAYOUT DE
-VINCULACION xlsx).
+"""Extrae los adjuntos de un correo (.eml o .msg de Outlook) a una carpeta
+y los identifica por nombre de archivo, según el patrón observado en los
+correos reales del cliente (ficha .docx, SAE 2.2.xlsx, control de
+renovacion.xlsx, LAYOUT DE VINCULACION xlsx).
 
 Por decisión explícita del usuario, en esta primera versión el bot no se
-conecta a Outlook automáticamente: el .eml se indica manualmente (ya sea
-guardado desde Outlook, o reenviado)."""
+conecta a Outlook automáticamente: el correo se indica manualmente (ya sea
+guardado desde Outlook, o reenviado).
+
+Soporta dos formatos, detectados por extensión (`.eml` / `.msg`) — agregado
+2026-09-22 porque al exportar el proyecto a otra máquina, Outlook ahí solo
+ofrecía guardar los correos como `.msg` (formato binario nativo de
+Outlook/OLE), no como `.eml` (texto plano RFC822). `.msg` se lee con la
+librería externa `extract-msg` (no requiere tener Outlook instalado);
+ambos formatos terminan en la misma `AdjuntosCorreo` vía
+`_clasificar_adjuntos`, así que el resto del pipeline no distingue cuál se
+usó. Verificado contra un .msg real (mismo correo de CORPORATIVO EN
+FARMACIAS que ya se había procesado como .eml): mismos 13 adjuntos."""
 
 from __future__ import annotations
 
-import email
 import re
 from dataclasses import dataclass
 from email import policy
@@ -48,20 +57,43 @@ _PATRONES = {
 }
 
 
-def extraer_adjuntos(eml_path: str | Path, destino_dir: str | Path) -> AdjuntosCorreo:
-    eml_path = Path(eml_path)
-    destino_dir = Path(destino_dir)
-    destino_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(eml_path, "rb") as f:
+def _leer_crudos_eml(correo_path: Path) -> tuple[str, list[tuple[str, bytes]]]:
+    with open(correo_path, "rb") as f:
         msg = BytesParser(policy=policy.default).parse(f)
-
-    resultado = AdjuntosCorreo(asunto=msg["subject"] or "")
+    crudos = []
     for part in msg.iter_attachments():
         nombre = part.get_filename()
         if not nombre:
             continue
-        datos = part.get_payload(decode=True)
+        crudos.append((nombre, part.get_payload(decode=True)))
+    return msg["subject"] or "", crudos
+
+
+def _leer_crudos_msg(correo_path: Path) -> tuple[str, list[tuple[str, bytes]]]:
+    import extract_msg
+
+    with extract_msg.openMsg(str(correo_path)) as msg:
+        asunto = (msg.subject or "").replace("\x00", "")
+        crudos = []
+        for adjunto in msg.attachments:
+            # extract-msg (0.56.1) devuelve el nombre con un '\x00' final en
+            # TODOS los adjuntos de este .msg real (propiedad OLE de largo
+            # fijo sin recortar) — sin este strip, open() falla con
+            # "embedded null character" al crear el archivo.
+            nombre = (adjunto.getFilename() or "").replace("\x00", "").strip()
+            if nombre and isinstance(adjunto.data, (bytes, bytearray)):
+                crudos.append((nombre, adjunto.data))
+    return asunto, crudos
+
+
+def _clasificar_adjuntos(
+    correo_path: Path,
+    destino_dir: Path,
+    asunto: str,
+    crudos: list[tuple[str, bytes]],
+) -> AdjuntosCorreo:
+    resultado = AdjuntosCorreo(asunto=asunto)
+    for nombre, datos in crudos:
         destino = destino_dir / nombre
         with open(destino, "wb") as out:
             out.write(datos)
@@ -104,8 +136,29 @@ def extraer_adjuntos(eml_path: str | Path, destino_dir: str | Path) -> AdjuntosC
     ):
         raise CorreoIncompletoError(
             f"No se pudieron identificar todos los adjuntos esperados en "
-            f"'{eml_path.name}'. Faltantes: {faltantes}. Adjuntos "
+            f"'{correo_path.name}'. Faltantes: {faltantes}. Adjuntos "
             f"encontrados: {[p.name for p in destino_dir.iterdir()]}"
         )
 
     return resultado
+
+
+_LECTORES_POR_EXTENSION = {
+    ".eml": _leer_crudos_eml,
+    ".msg": _leer_crudos_msg,
+}
+
+
+def extraer_adjuntos(correo_path: str | Path, destino_dir: str | Path) -> AdjuntosCorreo:
+    correo_path = Path(correo_path)
+    destino_dir = Path(destino_dir)
+    destino_dir.mkdir(parents=True, exist_ok=True)
+
+    lector = _LECTORES_POR_EXTENSION.get(correo_path.suffix.lower())
+    if lector is None:
+        raise ValueError(
+            f"Formato de correo no soportado: '{correo_path.suffix}' "
+            f"(se espera .eml o .msg) — {correo_path.name}"
+        )
+    asunto, crudos = lector(correo_path)
+    return _clasificar_adjuntos(correo_path, destino_dir, asunto, crudos)

@@ -3,8 +3,11 @@
 Uso:
     py -m virlan_bot.cli procesar --eml "ruta\\al\\correo.eml" [--tipo-venta RENOVACION] [--persona-autorizada "Nombre"]
 
+--eml acepta tanto .eml como .msg (formato nativo de Outlook) — ver
+eml_reader.py.
+
 Por decisión explícita del usuario, esta primera versión no se conecta a
-Outlook: el .eml se indica manualmente. Genera el CONTRATO y la OP en
+Outlook: el correo se indica manualmente. Genera el CONTRATO y la OP en
 salida/<cuenta>_<razon_social>/ junto con un paquete de revisión humana
 (revision.html) — el pipeline nunca debe considerarse terminado sin que una
 persona revise ese paquete. Además copia los 3 archivos finales (CONTRATO
@@ -72,7 +75,7 @@ def _copiar_a_contratos_terminados(carpeta_salida: Path, nombre_carpeta: str) ->
 def procesar(eml_path: str, tipo_venta: str | None, persona_autorizada: str | None) -> Path:
     eml_path = Path(eml_path)
     if not eml_path.exists():
-        raise FileNotFoundError(f"No existe el archivo .eml: {eml_path}")
+        raise FileNotFoundError(f"No existe el archivo de correo (.eml/.msg): {eml_path}")
 
     nombre_corto = _slug(eml_path.stem)[:40] + "_" + hashlib.sha1(str(eml_path).encode()).hexdigest()[:8]
     carpeta_temporal = config.SALIDA_DIR / "_tmp_adjuntos" / nombre_corto
@@ -192,8 +195,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="virlan_bot")
     sub = parser.add_subparsers(dest="comando", required=True)
 
-    p_procesar = sub.add_parser("procesar", help="Genera CONTRATO y OP a partir de un .eml")
-    p_procesar.add_argument("--eml", required=True, help="Ruta al correo .eml del cliente")
+    p_procesar = sub.add_parser("procesar", help="Genera CONTRATO y OP a partir de un correo .eml o .msg")
+    p_procesar.add_argument("--eml", required=True, help="Ruta al correo (.eml o .msg) del cliente")
     p_procesar.add_argument(
         "--tipo-venta",
         default=None,
