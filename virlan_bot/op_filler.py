@@ -17,6 +17,13 @@ ejemplo ya terminado):
   S12 Dirección de Entrega
   X6  Fecha (trae por defecto =TODAY() en el machote; se sobreescribe con la
       fecha de contratación)
+  G12 Folio de Autorización (`_folio_autorizacion`) — un solo folio para
+      toda la OP (no es por línea), según regla dada por el usuario
+      2026-09-22: 240729MKT0305 si el cliente trae equipo (mayoría de los
+      casos, no llega PDF de "oferta comercial"); si es solo SIM sin
+      equipo, 240729MKT0605 a 12 meses o 240717MKT0205 a 24 meses. Se deja
+      en blanco + alerta si no se puede determinar (sin líneas, mezcla de
+      con/sin equipo, o plazo sin equipo distinto de 12/24).
 
 Tabla de líneas (encabezados en fila 15, datos desde fila 16):
   C Núm. de líneas (=1 por fila)   D Ciudad DN   E Plan tarifario
@@ -28,13 +35,23 @@ Tabla de líneas (encabezados en fila 15, datos desde fila 16):
     de respaldo la columna 'Modalidad MPP/CPP' del SAE (`_modalidad_mpp_cpp`).
   J Precio de lista  (catalogo_precios.buscar_precio_lista)
   L Cuotas = Plazo
-  K Pago inicial/Diferencial de equipo (PIE) = 'Costo de Equipo' de control
-    de renovacion.xlsx, SOLO si es mayor a 0 (regla confirmada por el
-    usuario); si es 0 o no hay dato, se deja "N/A".
-  N MPE (calculadora_mpe.calcular_mpe) — usa como PIE el mismo valor de la
-    columna K (antes se mandaba PIE=0 siempre, lo cual el usuario confirmó
-    que estaba mal: el PIE del MPE debe ser el mismo 'Diferencial de
-    equipo unitario' de la columna K).
+  K Pago inicial/Diferencial de equipo (PIE) = columna de la hoja 'Precios'
+    de la lista de precios vigente que corresponde al número de plan y
+    plazo de la línea (catalogo_precios.buscar_precio_lista,
+    `diferencial_equipo`; ver `_columna_diferencial` ahí) — fuente
+    corregida 2026-09-22: antes se usaba 'Costo de Equipo' de control de
+    renovacion.xlsx, que el usuario confirmó que puede traer errores de
+    captura (verificado con un caso real: control de renovación traía
+    $26,679 y el valor correcto según la lista de precios, plan 599 a 24
+    meses, era $29,679). 'Costo de Equipo' solo se usa como respaldo si no
+    se puede determinar el diferencial desde la lista de precios (plan o
+    plazo fuera del catálogo conocido, o lista de precios no disponible),
+    y si ambas fuentes existen y difieren se genera una alerta para
+    revisión manual. Se deja "N/A" si ninguna fuente da un valor > 0.
+  N MPE (calculadora_mpe.calcular_mpe) — usa como PIE el mismo valor que
+    terminó en la columna K (el PIE del MPE debe ser siempre el mismo
+    'Diferencial de equipo unitario' de la columna K, regla confirmada por
+    el usuario).
   P Addon CTRL = "X" y S Pago mensual de servicios adicionales = 50,
     SOLO si el nombre del Plan tarifario trae el sufijo "CTRL" (regla
     confirmada por el usuario; precio fijo de $50).
@@ -110,6 +127,22 @@ class ResultadoOP:
     alertas: list[str] = dc_field(default_factory=list)
 
 
+def _set_con_ajuste(ws, rango: str, valor) -> None:
+    """Escribe `valor` en `rango` y activa 'Reducir hasta ajustar'
+    (ShrinkToFit) para que, si el texto no cabe en el ancho de la celda
+    (o del rango combinado), Excel reduzca la letra hasta que quepa en
+    una sola línea dentro del recuadro — en vez de recortarse (celdas
+    sueltas) o desbordarse verticalmente sobre la fila de abajo (celdas
+    combinadas con WrapText), como pasaba antes (regla pedida por el
+    usuario 2026-09-22, verificado visualmente con Marca/Modelo/Color y
+    Dirección de Entrega). WrapText y ShrinkToFit son excluyentes en
+    Excel, por eso se apaga WrapText explícitamente."""
+    celda = ws.Range(rango)
+    celda.Value = valor
+    celda.WrapText = False
+    celda.ShrinkToFit = True
+
+
 def _es_addon_ctrl(plan_tarifario: str) -> bool:
     """Addon CTRL = 'X' (col P) y $50 en Pago mensual de servicios
     adicionales unitario (col S), que luego se suman al número del plan en
@@ -141,6 +174,71 @@ def _modalidad_mpp_cpp(plan_tarifario: str, valor_extraido: str | None) -> str:
 def _numero_plan(plan_tarifario: str) -> float | None:
     m = _PATRON_NUMERO_PLAN.search(plan_tarifario or "")
     return float(m.group(1)) if m else None
+
+
+# Folio de Autorización (celda única G12, aplica a toda la OP, no es por
+# línea): depende de si el cliente trae equipo o es una renovación de solo
+# SIM, y en ese segundo caso del plazo (regla dada por el usuario
+# 2026-09-22). Cuando trae equipo casi nunca llega el PDF de "oferta
+# comercial" del correo (es la mayoría de los casos) y aun así corresponde
+# este folio fijo.
+_FOLIO_CON_EQUIPO = "240729MKT0305"
+_FOLIO_SIN_EQUIPO_12M = "240729MKT0605"
+_FOLIO_SIN_EQUIPO_24M = "240717MKT0205"
+
+# No hay todavía un ejemplo real de una línea "sin equipo" (solo SIM) en
+# SAE/control de renovación para confirmar cómo viene la columna 'Modelo'
+# en ese caso; se asume vacía o con uno de estos marcadores literales —
+# verificar con el usuario en cuanto aparezca un caso real (ver
+# [[feedback-verificacion-con-archivos-reales]] en memoria del proyecto).
+_MARCADORES_SIN_EQUIPO = {"SIN EQUIPO", "SOLO SIM", "SIM", "N/A", "NA"}
+
+
+def _trae_equipo(linea) -> bool:
+    modelo = (linea.modelo or "").strip().upper()
+    return bool(modelo) and modelo not in _MARCADORES_SIN_EQUIPO
+
+
+def _plazo_int(linea) -> int | None:
+    try:
+        return int(str(linea.plazo_meses).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _folio_autorizacion(cliente: ClienteContrato) -> tuple[str | None, str | None]:
+    """Devuelve (folio, alerta) — ver constantes _FOLIO_* arriba."""
+    if not cliente.lineas:
+        return None, (
+            "Folio de Autorización se dejó en blanco (no hay líneas para "
+            "determinar si el cliente trae equipo) — completar manualmente."
+        )
+
+    con_equipo = [l for l in cliente.lineas if _trae_equipo(l)]
+    sin_equipo = [l for l in cliente.lineas if not _trae_equipo(l)]
+
+    if con_equipo:
+        alerta = None
+        if sin_equipo:
+            alerta = (
+                "El cliente tiene líneas con equipo y sin equipo mezcladas; "
+                "el Folio de Autorización es un solo campo por toda la OP, "
+                f"se usó el de 'trae equipo' ({_FOLIO_CON_EQUIPO}) — "
+                "verificar si también aplica a las líneas sin equipo."
+            )
+        return _FOLIO_CON_EQUIPO, alerta
+
+    plazos = {_plazo_int(l) for l in sin_equipo}
+    if plazos == {12}:
+        return _FOLIO_SIN_EQUIPO_12M, None
+    if plazos == {24}:
+        return _FOLIO_SIN_EQUIPO_24M, None
+    return None, (
+        "Folio de Autorización se dejó en blanco: el cliente no trae "
+        "equipo (solo SIM) pero el plazo no es uniformemente 12 o 24 meses "
+        f"(plazos encontrados: {sorted(p for p in plazos if p is not None)}) "
+        "— completar manualmente."
+    )
 
 
 _FILAS_OBSERVACIONES_REDES = ["C35", "C36", "C37"]
@@ -217,23 +315,18 @@ def llenar_op(
         try:
             ws = wb.Worksheets(_HOJA)
 
-            ws.Range("C9").Value = cliente.razon_social
+            _set_con_ajuste(ws, "C9", cliente.razon_social)
             ws.Range("J9").Value = cliente.numero_cuenta
             ws.Range("N9").Value = cliente.rfc
-            ws.Range("N12").Value = f"{cliente.tipo_identificacion} //{cliente.numero_identificacion}"
-            ws.Range("S12").Value = _domicilio_entrega(cliente)
-
-            # El machote es un archivo reciclado de un cliente anterior; el
-            # Folio de Autorización que trae por defecto NO corresponde a
-            # este cliente y no hay todavía una fuente identificada para el
-            # de este cliente, así que se limpia en vez de dejar un folio
-            # ajeno que parezca válido.
-            ws.Range("G12").Value = None
-            resultado.alertas.append(
-                "Folio de Autorización se dejó en blanco (el machote traía "
-                "el de un cliente anterior y no hay fuente confirmada para "
-                "el de este cliente todavía) — completar manualmente."
+            _set_con_ajuste(
+                ws, "N12", f"{cliente.tipo_identificacion} //{cliente.numero_identificacion}"
             )
+            _set_con_ajuste(ws, "S12", _domicilio_entrega(cliente))
+
+            folio_autorizacion, alerta_folio = _folio_autorizacion(cliente)
+            ws.Range("G12").Value = folio_autorizacion
+            if alerta_folio:
+                resultado.alertas.append(alerta_folio)
 
             for nombre_shape in _CHECKBOX_TIPO_VENTA.values():
                 ws.Shapes(nombre_shape).TextFrame2.TextRange.Text = ""
@@ -250,7 +343,7 @@ def llenar_op(
             bloques_redes = _redes_streaming_por_plan(cliente)
             if bloques_redes:
                 for celda, bloque in zip(_FILAS_OBSERVACIONES_REDES, bloques_redes):
-                    ws.Range(celda).Value = bloque
+                    _set_con_ajuste(ws, celda, bloque)
                 if len(bloques_redes) > len(_FILAS_OBSERVACIONES_REDES):
                     resultado.alertas.append(
                         f"El cliente tiene {len(bloques_redes)} combinaciones de "
@@ -278,10 +371,10 @@ def llenar_op(
                     ws.Range(f"{col}{fila}").Value = "N/A"
 
                 ws.Range(f"C{fila}").Value = 1
-                ws.Range(f"D{fila}").Value = ciudad_dn
-                ws.Range(f"E{fila}").Value = linea.plan_tarifario
+                _set_con_ajuste(ws, f"D{fila}", ciudad_dn)
+                _set_con_ajuste(ws, f"E{fila}", linea.plan_tarifario)
                 ws.Range(f"F{fila}").Value = linea.plazo_meses
-                ws.Range(f"H{fila}").Value = linea.marca_modelo_color
+                _set_con_ajuste(ws, f"H{fila}", linea.marca_modelo_color)
                 ws.Range(f"T{fila}").Value = linea.telefono
                 ws.Range(f"U{fila}").Value = _modalidad_mpp_cpp(
                     linea.plan_tarifario, linea.modalidad_mpp_cpp
@@ -289,17 +382,12 @@ def llenar_op(
 
                 ws.Range(f"L{fila}").Value = linea.plazo_meses  # Cuotas = Plazo
 
-                pie = 0.0
-                if linea.costo_equipo is not None and linea.costo_equipo > 0:
-                    pie = linea.costo_equipo
-                    ws.Range(f"K{fila}").Value = pie
-
+                numero_plan = _numero_plan(linea.plan_tarifario)
                 es_ctrl = _es_addon_ctrl(linea.plan_tarifario)
                 if es_ctrl:
                     ws.Range(f"P{fila}").Value = "X"
                     ws.Range(f"S{fila}").Value = _ADDON_CTRL_PRECIO
 
-                numero_plan = _numero_plan(linea.plan_tarifario)
                 if numero_plan is not None:
                     ws.Range(f"Y{fila}").Value = numero_plan + (
                         _ADDON_CTRL_PRECIO if es_ctrl else 0
@@ -311,10 +399,17 @@ def llenar_op(
                         f"mensual unitario; se dejó 'N/A'."
                     )
 
+                diferencial_lista = None
                 if lista_precios_xlsx:
                     try:
-                        precio_lista = buscar_precio_lista(linea.modelo, lista_precios_xlsx)
+                        precio_lista = buscar_precio_lista(
+                            linea.modelo,
+                            lista_precios_xlsx,
+                            numero_plan=numero_plan,
+                            plazo_meses=linea.plazo_meses,
+                        )
                         ws.Range(f"J{fila}").Value = precio_lista.precio_lista
+                        diferencial_lista = precio_lista.diferencial_equipo
                         if precio_lista.es_sustituto:
                             resultado.alertas.append(
                                 f"'{linea.modelo}' no está en la lista de precios "
@@ -329,6 +424,45 @@ def llenar_op(
                         resultado.alertas.append(str(e))
                 else:
                     ws.Range(f"J{fila}").Value = "N/A"
+
+                # PIE (Pago inicial/Diferencial de equipo, OP col K): la
+                # lista de precios (columna de plan+plazo) es la fuente
+                # correcta (ver catalogo_precios._columna_diferencial);
+                # 'Costo de Equipo' de control de renovación solo se usa de
+                # respaldo si no se pudo determinar por lista de precios, y
+                # si ambas fuentes existen pero difieren se alerta (regla
+                # corregida 2026-09-22 tras error de captura detectado por
+                # el usuario en control de renovación para esta línea).
+                pie = 0.0
+                if diferencial_lista is not None and diferencial_lista > 0:
+                    pie = diferencial_lista
+                    ws.Range(f"K{fila}").Value = pie
+                    if (
+                        linea.costo_equipo is not None
+                        and linea.costo_equipo > 0
+                        and abs(linea.costo_equipo - diferencial_lista) > 1
+                    ):
+                        resultado.alertas.append(
+                            f"'Pago inicial/Diferencial de equipo' de la lista de "
+                            f"precios (${diferencial_lista:,.2f}, plan "
+                            f"{int(numero_plan) if numero_plan is not None else '?'} a "
+                            f"{linea.plazo_meses} meses) no coincide con 'Costo de "
+                            f"Equipo' de control de renovación "
+                            f"(${linea.costo_equipo:,.2f}) para la línea "
+                            f"{linea.telefono}; se usó el valor de la lista de "
+                            f"precios (fuente confirmada). Verificar manualmente."
+                        )
+                elif linea.costo_equipo is not None and linea.costo_equipo > 0:
+                    pie = linea.costo_equipo
+                    ws.Range(f"K{fila}").Value = pie
+                    resultado.alertas.append(
+                        f"No se pudo obtener 'Pago inicial/Diferencial de equipo' "
+                        f"de la lista de precios para la línea {linea.telefono} "
+                        f"(plan/plazo fuera del catálogo conocido o equipo no "
+                        f"encontrado); se usó como respaldo 'Costo de Equipo' de "
+                        f"control de renovación (${linea.costo_equipo:,.2f}) — "
+                        f"verificar manualmente."
+                    )
 
                 if calculo_mpe_xlsx and linea.plazo_meses:
                     try:

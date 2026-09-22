@@ -32,6 +32,14 @@ misma capacidad en GB y misma conectividad (4G/5G/LTE) son obligatorias, el
 resto es "el más similar". Regla confirmada por el usuario — ver
 equipo_matching.py. Un resultado sustituto siempre trae `es_sustituto=True`
 y debe alertarse para revisión manual antes de enviar.
+
+Si se pasan `numero_plan` y `plazo_meses`, además se lee de la misma fila
+'Pago inicial/Diferencial de equipo' (ver `_columna_diferencial`): la hoja
+'Precios' trae, a la derecha de 'Full price', un bloque de 5 columnas
+(12/18/24/36/48 meses) por cada número de plan (299/399/499/599/799/1299/
+1499). Esta es la fuente correcta para la OP col K — antes se usaba
+'Costo de Equipo' de control de renovacion.xlsx, que resultó traer errores
+de captura (corregido 2026-09-22, ver op_filler.py).
 """
 
 from __future__ import annotations
@@ -53,6 +61,33 @@ _COL_FULL_PRICE = 6  # F
 _COL_FECHA_INICIO = 42  # AP
 _COL_FECHA_FIN = 43  # AQ
 
+# 'Pago inicial/Diferencial de equipo' (OP col K): la hoja 'Precios' trae,
+# a la derecha de 'Full price', 7 bloques de 5 columnas cada uno (uno por
+# número de plan: 299/399/499/599/799/1299/1499 — fila 1 trae el nombre
+# '´Armalo Negocios <plan>' encabezando cada bloque, fila 2 el número de
+# plan tal cual), y dentro de cada bloque una columna por plazo en meses
+# (12/18/24/36/48, en ese orden). Verificado con un caso real (usuario
+# 2026-09-22): plan 599 a 24 meses para 'APPLE IPHONE 18 PRO MAX 256GB 5G'
+# da columna X (24) = 29679, que es el valor correcto de 'Pago inicial/
+# Diferencial de equipo' — antes el bot usaba 'Costo de Equipo' de control
+# de renovacion.xlsx para ese campo, que puede venir con error de captura
+# (para ese mismo cliente traía 26679, incorrecto).
+_PLANES_DIFERENCIAL = (299, 399, 499, 599, 799, 1299, 1499)
+_PLAZOS_DIFERENCIAL = (12, 18, 24, 36, 48)
+_COL_PRIMER_BLOQUE_DIFERENCIAL = 7  # G: inicio del bloque del plan 299
+
+
+def _columna_diferencial(numero_plan: float | None, plazo_meses: int | None) -> int | None:
+    if numero_plan is None or plazo_meses is None:
+        return None
+    numero_plan_int = int(numero_plan)
+    plazo_meses_int = int(plazo_meses)
+    if numero_plan_int not in _PLANES_DIFERENCIAL or plazo_meses_int not in _PLAZOS_DIFERENCIAL:
+        return None
+    bloque = _PLANES_DIFERENCIAL.index(numero_plan_int)
+    termino = _PLAZOS_DIFERENCIAL.index(plazo_meses_int)
+    return _COL_PRIMER_BLOQUE_DIFERENCIAL + 5 * bloque + termino
+
 
 class EquipoNoEncontradoError(Exception):
     pass
@@ -64,14 +99,20 @@ class PrecioEquipo:
     precio_lista: float
     fila: int
     es_sustituto: bool = False
+    diferencial_equipo: float | None = None
 
 
 def buscar_precio_lista(
-    equipo: str, lista_precios_xlsx: str | Path, fecha: _dt.date | None = None
+    equipo: str,
+    lista_precios_xlsx: str | Path,
+    fecha: _dt.date | None = None,
+    numero_plan: float | None = None,
+    plazo_meses: int | None = None,
 ) -> PrecioEquipo:
     fecha = fecha or _dt.date.today()
     equipo_norm = equipo.strip().upper()
     equipo_tokens = Counter(equipo_norm.split())
+    columna_diferencial = _columna_diferencial(numero_plan, plazo_meses)
 
     wb = openpyxl.load_workbook(lista_precios_xlsx, data_only=True, read_only=True)
     try:
@@ -94,7 +135,14 @@ def buscar_precio_lista(
             precio = fila[_COL_FULL_PRICE - 1].value
             if precio is None:
                 continue
-            candidato = PrecioEquipo(str(familia), float(precio), fila[0].row)
+            diferencial = None
+            if columna_diferencial is not None:
+                valor_diferencial = fila[columna_diferencial - 1].value
+                if valor_diferencial is not None:
+                    diferencial = float(valor_diferencial)
+            candidato = PrecioEquipo(
+                str(familia), float(precio), fila[0].row, diferencial_equipo=diferencial
+            )
             vigentes.append((familia_norm, candidato))
             if equipo_coincide(equipo_tokens, familia_norm):
                 coincidencias.append(candidato)
