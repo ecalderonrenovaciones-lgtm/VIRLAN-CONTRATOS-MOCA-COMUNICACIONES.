@@ -29,11 +29,11 @@ VIRLAN CONTRATOS BOT/
 │   ├── MACHOTE CONTRATOS/           Plantillas en blanco (PDF del contrato, Excel
 │   │                                de la OP) — no tocar
 │   ├── DOCUMENTOS CONSULTA/         Lista de precios, cálculo MPE, catálogo de ladas
-│   └── EJEMPLO DE CONTRATOS/        Ejemplos reales ya llenos, de referencia
+│   ├── EJEMPLO DE CONTRATOS/        Ejemplos reales ya llenos, de referencia
+│   └── CORREO DE INFORMACIÓN/       Correos .eml de clientes ya procesados
 └── ARCHIVOS DEL BOT/                Todo lo demás (este README incluido)
     ├── virlan_bot/                  Código del bot
     ├── config/contrato_fieldmap.v1.json   Coordenadas/calibración del PDF del CONTRATO
-    ├── CORREO DE INFORMACIÓN/       Correos .eml de clientes ya procesados
     ├── salida/                     Carpeta de trabajo real del bot (se crea sola al
     │                                correrlo) — incluye revision.html, PNGs de
     │                                previsualización y _tmp_adjuntos; CONTRATOS
