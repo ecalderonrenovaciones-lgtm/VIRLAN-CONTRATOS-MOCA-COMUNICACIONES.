@@ -1,0 +1,12 @@
+# Bytecode / caches
+__pycache__/
+*.pyc
+
+# Extracción temporal de adjuntos de .eml (se regenera en cada corrida)
+salida/_tmp_adjuntos/
+
+# Editores / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

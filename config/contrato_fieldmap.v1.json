@@ -1,0 +1,49 @@
+{
+  "_descripcion": "Mapa de campos variables de la página 1 del CONTRATO AT&T. Coordenadas en puntos PDF (origen arriba-izquierda), calibradas comparando MACHOTE CONTRATOS/Contrato nueva versión NUEVO.pdf contra EJEMPLO DE CONTRATOS/CONTRATO EJEMPLO TERMINADO.pdf. Página 792pt alto x 612pt ancho. Los bbox se dejaron ajustados a lo observado (con margen mínimo, verificado contra las etiquetas vecinas con page.search_for) para que la redacción nunca invada una etiqueta fija: probarlo ampliamente antes de ensanchar cualquier campo.",
+  "pagina": 0,
+  "campos_texto": {
+    "plaza_de_venta": {"bbox": [83.1, 53.7, 138.0, 70.0], "font": "ArialMT", "size": 12.0, "align": "left", "nota": "etiqueta 'CIUDAD:' empieza en x=142.9, no ampliar más allá de ~140"},
+    "ciudad": {"bbox": [197.1, 53.7, 270.0, 70.0], "font": "ArialMT", "size": 12.0, "align": "left"},
+    "fecha_contratacion": {"bbox": [33.4, 141.2, 118.4, 153.5], "font": "ArialMT", "size": 9.0, "align": "left", "formato": "dd          mm        aaaa"},
+    "punto_venta_nombre": {"bbox": [133.5, 136.9, 278.0, 147.8], "font": "ArialMT", "size": 8.0, "align": "left", "nota": "etiqueta 'Nombre del Ejecutivo' empieza en x=285.0"},
+    "punto_venta_codigo": {"bbox": [133.5, 146.5, 278.0, 157.4], "font": "ArialMT", "size": 8.0, "align": "left", "nota": "etiqueta 'R.F.C. del Ejecutivo' empieza en x=283.0"},
+    "nombre_ejecutivo": {"bbox": [375.4, 126.8, 530.0, 138.3], "font": "Arial-BoldMT", "size": 8.0, "align": "left"},
+    "numero_cuenta": {"bbox": [535.8, 115.7, 592.0, 129.3], "font": "ArialMT", "size": 10.0, "align": "left"},
+    "rfc_ejecutivo": {"bbox": [367.9, 144.5, 455.0, 156.8], "font": "ArialMT", "size": 9.0, "align": "left"},
+    "razon_social": {"bbox": [189.2, 243.9, 430.0, 256.2], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "caja 'R.F.C.' del cliente empieza en x=442.5"},
+    "representante_legal_1": {"bbox": [113.2, 272.8, 430.0, 285.0], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "campo 'Representante Legal' en DATOS DEL SUSCRIPTOR; etiqueta 'Teléfono' empieza en x=442.5"},
+    "telefono_1": {"bbox": [487.0, 272.8, 592.0, 285.0], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "Teléfono junto a Representante Legal"},
+    "domicilio_calle_numero": {"bbox": [34.0, 305.5, 246.0, 317.8], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "Domicilio Fiscal Calle y Número Ext. e Int.; siguiente campo (colonia) empieza en x=250"},
+    "domicilio_colonia": {"bbox": [250.0, 309.0, 299.0, 317.8], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "etiqueta 'Correspondencia' (fila de arriba, y hasta 308.5) se solapa en x con este campo; y0 subido a 309.0 para no invadirla. No ampliar x1 mucho más de 300"},
+    "domicilio_ciudad_estado_cp": {"bbox": [358.0, 305.5, 546.0, 317.8], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "Del./Municipio, Estado y C.P. en una sola línea con espaciado fijo"},
+    "telefono_2": {"bbox": [549.1, 305.5, 592.0, 317.9], "font": "ArialMT", "size": 7.0, "align": "left"},
+    "persona_autorizada_recibir_equipos": {"bbox": [22.3, 362.9, 592.0, 375.2], "font": "ArialMT", "size": 9.0, "align": "left", "prefijo": ": "},
+    "tipo_identificacion_oficial": {"bbox": [130.9, 379.4, 160.0, 391.7], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "etiqueta 'No. Identificación Oficial' (parte de la imagen de fondo) empieza aprox. en x=168-170, no ampliar"},
+    "numero_identificacion_oficial": {"bbox": [187.9, 388.6, 280.0, 400.9], "font": "ArialMT", "size": 9.0, "align": "left"},
+    "fecha_maxima_entrega": {"bbox": [381.0, 379.4, 470.0, 391.8], "font": "ArialMT", "size": 9.0, "align": "left", "formato": "dd       mm        aaaa"},
+    "hora_entrega": {"bbox": [515.8, 382.1, 592.0, 394.3], "font": "ArialMT", "size": 9.0, "align": "left", "formato": "H            H"},
+    "plazo_meses": {"bbox": [193.7, 419.4, 230.0, 431.7], "font": "ArialMT", "size": 9.0, "align": "left"},
+    "correo_electronico": {"bbox": [219.3, 603.5, 340.0, 614.5], "font": "ArialMT", "size": 8.0, "align": "left"},
+    "representante_legal_2": {"bbox": [50.4, 733.6, 300.0, 745.8], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "nombre impreso bajo la firma del suscriptor"}
+  },
+  "campo_rfc_cliente": {
+    "bbox": [447.1, 245.9, 573.6, 258.2],
+    "font": "ArialMT",
+    "size": 9.0,
+    "num_casillas": 12,
+    "nota": "RFC persona moral, 12 caracteres, uno por casilla distribuido uniformemente en el bbox"
+  },
+  "checkboxes": {
+    "_nota": "tipo_contratacion_renovacion se calibró contra dos ejemplos reales. tipo_contratacion_suscripcion_nueva y tipo_contratacion_adicion se obtuvieron localizando los rectángulos vectoriales reales de la fila 'TIPO DE CONTRATACIÓN' con page.get_drawings() (misma fila, mismo tamaño de casilla que la de Renovación) — no son una estimación visual, pero aún no se probaron contra un ejemplo real ya lleno con esas opciones. Otras opciones (Creación Subcuenta, Responsabilidad de pago, Eq. Prop. Cliente, No Acepto) siguen sin calibrar: si un cliente las necesita, el pipeline debe detenerse y pedir calibración antes de continuar.",
+    "tipo_contratacion_suscripcion_nueva": {"bbox": [24.2, 95.9, 35.2, 110.2], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "tipo_contratacion_adicion": {"bbox": [128.2, 95.9, 139.2, 110.2], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "tipo_contratacion_renovacion": {"bbox": [416.3, 95.7, 423.0, 110.1], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "aviso_privacidad_acepto": {"bbox": [489.1, 165.3, 495.7, 179.6], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "autorizo_factura_correo_acepto": {"bbox": [56.2, 604.0, 62.8, 618.3], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "tipo_plazo_minimo": {"bbox": [119.0, 429.6, 125.7, 444.0], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "domicilio_fiscal_es_dom_entrega": {"bbox": [192.8, 292.0, 199.5, 306.3], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "domicilio_fiscal_es_correspondencia": {"bbox": [260.8, 292.0, 267.5, 306.3], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"}
+  },
+  "paginas_fijas": [1, 2],
+  "_nota_paginas_fijas": "Páginas 2 y 3 (índice 1 y 2) verificadas 100% idénticas entre los dos ejemplos reales; se copian sin tocar."
+}
