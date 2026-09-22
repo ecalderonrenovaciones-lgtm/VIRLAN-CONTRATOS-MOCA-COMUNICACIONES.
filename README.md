@@ -44,6 +44,8 @@ VIRLAN CONTRATOS BOT/
 
 `ARCHIVOS INTERCAMBIABLES/DOCUMENTOS CONSULTA/` se edita en vivo (el usuario reemplaza la lista de precios, el cálculo MPE y el catálogo de ladas cuando le llegan versiones nuevas por correo). El bot **siempre toma el archivo más reciente** que coincida con el patrón esperado (`Lista de Precios*.xlsx`, `*Cálculo de MPE*.xlsx`, `ladas_mexico*.csv`), no un nombre exacto, así que basta con dejar caer el archivo nuevo en esa carpeta.
 
+> `.git` vive dentro de `ARCHIVOS DEL BOT/` (decisión del usuario 2026-09-22). Esto significa que **`CONTRATOS TERMINADOS/` y `ARCHIVOS INTERCAMBIABLES/` no tienen respaldo ni historial en Git** — solo lo que está dentro de `ARCHIVOS DEL BOT/` (código, `salida/`, `tests/`) se versiona. No afecta el funcionamiento del bot (las rutas se resuelven por sistema de archivos), solo la cobertura del control de versiones.
+
 ## Uso
 
 El comando se corre con `ARCHIVOS DEL BOT/` como directorio de trabajo (ahí vive el paquete `virlan_bot/`):
