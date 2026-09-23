@@ -15,8 +15,9 @@ ejemplo ya terminado):
   S9  Folio de Contrato (se deja en blanco, lo asigna AT&T después)
   N12 Identificación Oficial, formato "<tipo> //<numero>" (ej. "INE //2090776014")
   S12 Dirección de Entrega
-  X6  Fecha (trae por defecto =TODAY() en el machote; se sobreescribe con la
-      fecha de contratación)
+  X6  Fecha (el machote trae la del ejemplo como valor fijo, no =TODAY(); se
+      sobreescribe con la fecha de contratación = fecha de cotejo del INE, igual
+      que el CONTRATO; ver cli.py)
   G12 Folio de Autorización (`_folio_autorizacion`) — un solo folio para
       toda la OP (no es por línea), según regla dada por el usuario
       2026-09-22: 240729MKT0305 si el cliente trae equipo (mayoría de los
@@ -48,7 +49,11 @@ Tabla de líneas (encabezados en fila 15, datos desde fila 16):
     plazo fuera del catálogo conocido, o lista de precios no disponible),
     y si ambas fuentes existen y difieren se genera una alerta para
     revisión manual. Se deja "N/A" si ninguna fuente da un valor > 0.
-  N MPE (calculadora_mpe.calcular_mpe) — usa como PIE el mismo valor que
+  N MPE: criterio principal la calculadora (calculadora_mpe.calcular_mpe);
+    criterio alternativo (usuario 2026-09-23) (Precio de lista - Diferencial
+    unitario) / plazo con TRUNC(x+0.01, 2) (`mpe_desde_lista`), que se usa si
+    la calculadora falla, y gana si ambos difieren (el precio correcto es el de
+    la lista de precios). Usa como PIE el mismo valor que
     terminó en la columna K (el PIE del MPE debe ser siempre el mismo
     'Diferencial de equipo unitario' de la columna K, regla confirmada por
     el usuario).
@@ -86,6 +91,7 @@ se dejan como "N/A"."""
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 import shutil
 from dataclasses import dataclass, field as dc_field
@@ -94,7 +100,7 @@ from pathlib import Path
 import win32com.client as win32
 
 from .calculadora_mpe import EquipoNoEncontradoError as MPENoEncontradoError
-from .calculadora_mpe import calcular_mpe
+from .calculadora_mpe import calcular_mpe, mpe_desde_lista
 from .catalogo_precios import EquipoNoEncontradoError as PrecioNoEncontradoError
 from .catalogo_precios import buscar_precio_lista
 from .ladas_lookup import LadaNoEncontradaError, ciudad_dn_por_telefono
@@ -205,12 +211,10 @@ _FOLIO_CON_EQUIPO = "240729MKT0305"
 _FOLIO_SIN_EQUIPO_12M = "240729MKT0605"
 _FOLIO_SIN_EQUIPO_24M = "240717MKT0205"
 
-# No hay todavía un ejemplo real de una línea "sin equipo" (solo SIM) en
-# SAE/control de renovación para confirmar cómo viene la columna 'Modelo'
-# en ese caso; se asume vacía o con uno de estos marcadores literales —
-# verificar con el usuario en cuanto aparezca un caso real (ver
-# [[feedback-verificacion-con-archivos-reales]] en memoria del proyecto).
-_MARCADORES_SIN_EQUIPO = {"SIN EQUIPO", "SOLO SIM", "SIM", "N/A", "NA"}
+# Línea "sin equipo" (solo SIM): primer caso real visto 2026-09-23 (DESECHABLES
+# MANOLO, ADICIÓN por portabilidad): SAE/control traen Modelo = "SIM CARD" y
+# Color = "NA". Las demás variantes son suposiciones sin verificar.
+_MARCADORES_SIN_EQUIPO = {"SIN EQUIPO", "SOLO SIM", "SIM", "SIM CARD", "N/A", "NA"}
 
 
 def _trae_equipo(linea) -> bool:
@@ -293,6 +297,17 @@ def _redes_streaming_por_plan(cliente: ClienteContrato) -> list[str]:
 
 
 def _domicilio_entrega(cliente: ClienteContrato) -> str:
+    # Si el paquete se envía al domicilio de ENTREGA (regla del usuario
+    # 2026-09-23) la OP lleva ese domicilio y ya no el fiscal.
+    if cliente.envio_a == "ENTREGA":
+        partes = [
+            cliente.entrega_calle_numero(),
+            cliente.domicilio_entrega_colonia,
+            cliente.domicilio_entrega_ciudad,
+            cliente.domicilio_entrega_estado,
+            cliente.domicilio_entrega_cp,
+        ]
+        return ", ".join(p for p in partes if p)
     partes = [
         cliente.domicilio_calle_numero(),
         cliente.domicilio_colonia,
@@ -312,6 +327,7 @@ def llenar_op(
     lista_precios_xlsx: str | Path | None = None,
     calculo_mpe_xlsx: str | Path | None = None,
     oferta_comercial: OfertaComercial | None = None,
+    fecha_contratacion: _dt.date | None = None,
 ) -> ResultadoOP:
     """Copia machote_xlsx a salida_xlsx y lo llena con los datos del cliente.
     Requiere Excel instalado (usa win32com para preservar las formas de los
@@ -334,6 +350,14 @@ def llenar_op(
         wb = excel.Workbooks.Open(str(salida_xlsx.resolve()))
         try:
             ws = wb.Worksheets(_HOJA)
+
+            # El machote trae la fecha del ejemplo tal cual (valor fijo, no
+            # =TODAY()); debe ser la misma fecha de contratación del CONTRATO
+            # (verificado con los ejemplos terminados: OP y contrato coinciden),
+            # que es la fecha de cotejo del INE (ver cli.py).
+            ws.Range("X6").Value = _dt.datetime.combine(
+                fecha_contratacion or _dt.date.today(), _dt.time()
+            )
 
             _set_con_ajuste(ws, "C9", cliente.razon_social)
             ws.Range("J9").Value = cliente.numero_cuenta
@@ -402,7 +426,9 @@ def llenar_op(
                     ws.Range(f"{col}{fila}").Value = "N/A"
 
                 ws.Range(f"C{fila}").Value = 1
-                _set_con_ajuste(ws, f"D{fila}", ciudad_dn)
+                # Sin lada determinable (ej. SIM con teléfono "NA" por portabilidad)
+                # se pone N/A en vez de dejar la celda vacía.
+                _set_con_ajuste(ws, f"D{fila}", ciudad_dn or "N/A")
                 _set_con_ajuste(ws, f"E{fila}", linea.plan_tarifario)
                 ws.Range(f"F{fila}").Value = linea.plazo_meses
                 _set_con_ajuste(ws, f"H{fila}", linea.marca_modelo_color)
@@ -452,7 +478,8 @@ def llenar_op(
                     )
 
                 diferencial_lista = None
-                if lista_precios_xlsx:
+                precio_lista_valor = None
+                if lista_precios_xlsx and _trae_equipo(linea):
                     try:
                         precio_lista = buscar_precio_lista(
                             linea.modelo,
@@ -461,16 +488,8 @@ def llenar_op(
                             plazo_meses=linea.plazo_meses,
                         )
                         ws.Range(f"J{fila}").Value = precio_lista.precio_lista
+                        precio_lista_valor = precio_lista.precio_lista
                         diferencial_lista = precio_lista.diferencial_equipo
-                        if precio_lista.es_sustituto:
-                            resultado.alertas.append(
-                                f"'{linea.modelo}' no está en la lista de precios "
-                                f"vigente; se usó el sustituto más similar con la "
-                                f"misma capacidad y conectividad: "
-                                f"'{precio_lista.familia}' (${precio_lista.precio_lista}). "
-                                f"Verificar manualmente antes de enviar (línea "
-                                f"{linea.telefono})."
-                            )
                     except PrecioNoEncontradoError as e:
                         ws.Range(f"J{fila}").Value = "N/A"
                         resultado.alertas.append(str(e))
@@ -492,7 +511,11 @@ def llenar_op(
                 # Si dos fuentes disponibles difieren, se alerta en vez de
                 # elegir en silencio.
                 pie = 0.0
-                if mov_oferta is not None:
+                if not _trae_equipo(linea):
+                    # SIM sin equipo: no tiene costo, el pago inicial no aplica
+                    # (regla del usuario 2026-09-23) aunque la oferta traiga $0.00.
+                    ws.Range(f"K{fila}").Value = "N/A"
+                elif mov_oferta is not None:
                     pie = mov_oferta.precio_unitario_sin_iva
                     ws.Range(f"K{fila}").Value = pie
                     if linea.costo_equipo is not None and abs(linea.costo_equipo - pie) > 1:
@@ -535,26 +558,57 @@ def llenar_op(
                         f"verificar manualmente."
                     )
 
-                if calculo_mpe_xlsx and linea.plazo_meses:
+                # MPE (col N). Criterio principal: la calculadora MPE. Criterio
+                # alternativo (regla del usuario 2026-09-23, verificado en 37 de 38
+                # líneas ya generadas): (Precio de lista - Diferencial de equipo) /
+                # plazo con la misma fórmula de la calculadora. Se usa si la
+                # calculadora falla, y si ambas difieren gana el precio de la LISTA
+                # DE PRECIOS, que es el correcto según el usuario.
+                plazo_int = int(linea.plazo_meses) if str(linea.plazo_meses).isdigit() else None
+                mpe_lista = (
+                    mpe_desde_lista(precio_lista_valor, pie, plazo_int)
+                    if precio_lista_valor is not None and plazo_int
+                    else None
+                )
+                mpe_calc = None
+                error_calc = None
+                if calculo_mpe_xlsx and plazo_int and _trae_equipo(linea):
                     try:
-                        mpe = calcular_mpe(
-                            linea.modelo, int(linea.plazo_meses), calculo_mpe_xlsx, pie=pie
-                        )
-                        ws.Range(f"N{fila}").Value = mpe.mpe
-                        if mpe.es_sustituto:
-                            resultado.alertas.append(
-                                f"'{linea.modelo}' no está en el cálculo de MPE; se "
-                                f"usó el sustituto más similar con la misma "
-                                f"capacidad y conectividad (Precio Base "
-                                f"${mpe.precio_base}, fila {mpe.fila} de "
-                                f"'{Path(calculo_mpe_xlsx).name}'). Verificar "
-                                f"manualmente antes de enviar (línea {linea.telefono})."
-                            )
+                        mpe_calc = calcular_mpe(linea.modelo, plazo_int, calculo_mpe_xlsx, pie=pie)
                     except (MPENoEncontradoError, ValueError) as e:
-                        ws.Range(f"N{fila}").Value = "N/A"
-                        resultado.alertas.append(str(e))
-                else:
-                    ws.Range(f"N{fila}").Value = "N/A"
+                        error_calc = e
+
+                mpe_final = None
+                if mpe_calc is not None and (mpe_lista is None or abs(mpe_calc.mpe - mpe_lista) < 0.005):
+                    mpe_final = mpe_calc.mpe
+                elif mpe_calc is not None:
+                    mpe_final = mpe_lista
+                    resultado.alertas.append(
+                        f"'{linea.modelo}' (línea {linea.telefono}): el Precio de lista de la "
+                        f"lista de precios (${precio_lista_valor:,.2f}) no coincide con el "
+                        f"Precio Base del cálculo de MPE (${mpe_calc.precio_base:,.2f}); el MPE "
+                        f"se calculó con el precio de la LISTA DE PRECIOS ({mpe_lista}) por ser "
+                        f"el correcto (con el de la calculadora sería {mpe_calc.mpe}). "
+                        f"Consultar por qué difieren."
+                    )
+                elif mpe_lista is not None:
+                    mpe_final = mpe_lista
+                    resultado.alertas.append(
+                        f"La calculadora MPE no dio resultado para '{linea.modelo}' (línea "
+                        f"{linea.telefono}): {error_calc or 'sin archivo de calculadora'}. El MPE "
+                        f"se calculó con el criterio alternativo (Precio de lista - Diferencial "
+                        f"de equipo) / plazo = {mpe_lista}."
+                    )
+                elif error_calc is not None:
+                    resultado.alertas.append(str(error_calc))
+
+                if mpe_final is not None and mpe_final < 0:
+                    resultado.alertas.append(
+                        f"MPE calculado negativo ({mpe_final}) para '{linea.modelo}' (línea "
+                        f"{linea.telefono}); se dejó N/A, consultar por qué los datos no cuadran."
+                    )
+                    mpe_final = None
+                ws.Range(f"N{fila}").Value = mpe_final if mpe_final is not None else "N/A"
 
                 fila += 1
                 resultado.lineas_escritas += 1

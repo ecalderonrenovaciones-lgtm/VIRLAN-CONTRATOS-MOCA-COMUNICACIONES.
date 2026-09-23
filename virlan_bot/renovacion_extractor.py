@@ -45,6 +45,10 @@ def _extraer_control_renovacion(path: Path, numero_cuenta: str) -> list[LineaRen
         cuenta = _buscar_valor(fila, _CUENTA_KEYS_CONTROL)
         if cuenta != numero_cuenta:
             continue
+        if not fila.get("Línea de Renovar", "").strip():
+            # Fila sin teléfono (ej. fila formateada suelta al final de la hoja,
+            # visto en MAQUINAS INTELIGENTES): no es una línea real.
+            continue
         costo_equipo_raw = fila.get("Costo de Equipo")
         try:
             costo_equipo = float(costo_equipo_raw) if costo_equipo_raw not in (None, "") else None
@@ -57,7 +61,7 @@ def _extraer_control_renovacion(path: Path, numero_cuenta: str) -> list[LineaRen
                 plazo_meses=fila.get("Plazo", ""),
                 modelo=fila.get("Modelo", ""),
                 marca_modelo_color=", ".join(
-                    p for p in (fila.get("Modelo", ""), fila.get("Color", "")) if p
+                    p for p in (fila.get("Modelo", ""), fila.get("Color", "")) if p and p.strip().upper() not in ("NA", "N/A")
                 ),
                 costo_equipo=costo_equipo,
                 fuente=path.name,
@@ -81,7 +85,7 @@ def _extraer_sae(path: Path, numero_cuenta: str) -> list[LineaRenovacion]:
                 plazo_meses=(fila.get("Plazo", "") or "").replace("MESES", "").strip(),
                 modelo=fila.get("Modelo", ""),
                 marca_modelo_color=", ".join(
-                    p for p in (fila.get("Modelo", ""), fila.get("Color", "")) if p
+                    p for p in (fila.get("Modelo", ""), fila.get("Color", "")) if p and p.strip().upper() not in ("NA", "N/A")
                 ),
                 modalidad_mpp_cpp=fila.get("Modalidad      MPP / CPP ", "").strip() or None,
                 addon_extra=fila.get("Addon Extra") or None,

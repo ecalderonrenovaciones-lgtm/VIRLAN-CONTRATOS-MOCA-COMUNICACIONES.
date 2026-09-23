@@ -38,17 +38,27 @@ class AdjuntosCorreo:
     control_renovacion_xlsx: Path | None = None
     vinculacion_xlsx: Path | None = None
     oferta_comercial_pdf: Path | None = None
+    # PDF escaneado de la identificación oficial ("INE_<nombre>.pdf"); trae a
+    # mano "Cotejado contra original", el nombre de quien coteja y la FECHA DE
+    # COTEJO, que es la fecha de contratación (regla del usuario 2026-09-23).
+    ine_pdf: Path | None = None
+    # Personas autorizadas para recibir equipos, leídas del cuerpo del correo
+    # (ver `extraer_personas_autorizadas`); vacío si el correo no las trae.
+    personas_autorizadas: list[str] = None
     otros: list[Path] = None
 
     def __post_init__(self):
         if self.otros is None:
             self.otros = []
+        if self.personas_autorizadas is None:
+            self.personas_autorizadas = []
 
 
 _PATRONES = {
     "sae_xlsx": re.compile(r"^\d*\s*SAE", re.I),
     "control_renovacion_xlsx": re.compile(r"control\s*de\s*renovaci[oó]n", re.I),
     "vinculacion_xlsx": re.compile(r"vinculaci[oó]n", re.I),
+    "ine_pdf": re.compile(r"^(?:\d+\s*)?INE[_\s]", re.I),
     # Nombre del archivo no es fijo (se genera ad-hoc por deal, ej.
     # 'PdfPropuestaComercial PDF CORPORATIVO EN F FARMACIA.pdf'), así que
     # el patrón por nombre es un intento best-effort; si no matchea, hay
@@ -57,7 +67,7 @@ _PATRONES = {
 }
 
 
-def _leer_crudos_eml(correo_path: Path) -> tuple[str, list[tuple[str, bytes]]]:
+def _leer_crudos_eml(correo_path: Path) -> tuple[str, str, list[tuple[str, bytes]]]:
     with open(correo_path, "rb") as f:
         msg = BytesParser(policy=policy.default).parse(f)
     crudos = []
@@ -66,14 +76,19 @@ def _leer_crudos_eml(correo_path: Path) -> tuple[str, list[tuple[str, bytes]]]:
         if not nombre:
             continue
         crudos.append((nombre, part.get_payload(decode=True)))
-    return msg["subject"] or "", crudos
+    cuerpo_part = msg.get_body(preferencelist=("plain", "html"))
+    cuerpo = cuerpo_part.get_content() if cuerpo_part is not None else ""
+    if cuerpo_part is not None and cuerpo_part.get_content_subtype() == "html":
+        cuerpo = re.sub(r"<[^>]+>", " ", cuerpo)
+    return msg["subject"] or "", cuerpo, crudos
 
 
-def _leer_crudos_msg(correo_path: Path) -> tuple[str, list[tuple[str, bytes]]]:
+def _leer_crudos_msg(correo_path: Path) -> tuple[str, str, list[tuple[str, bytes]]]:
     import extract_msg
 
     with extract_msg.openMsg(str(correo_path)) as msg:
         asunto = (msg.subject or "").replace("\x00", "")
+        cuerpo = (msg.body or "").replace("\x00", "")
         crudos = []
         for adjunto in msg.attachments:
             # extract-msg (0.56.1) devuelve el nombre con un '\x00' final en
@@ -83,7 +98,27 @@ def _leer_crudos_msg(correo_path: Path) -> tuple[str, list[tuple[str, bytes]]]:
             nombre = (adjunto.getFilename() or "").replace("\x00", "").strip()
             if nombre and isinstance(adjunto.data, (bytes, bytearray)):
                 crudos.append((nombre, adjunto.data))
-    return asunto, crudos
+    return asunto, cuerpo, crudos
+
+
+# Los nombres de quienes reciben los equipos vienen en el cuerpo del correo
+# (acordado con el usuario 2026-09-23), con redacción variable. Formatos vistos
+# en correos reales: "PERSONAS AUTORIZADAS A RECIBIR: A, B", "PERSONAS : A, B",
+# "...personas autorizadas para recibir: A", "Reciben: A y B". Algunos correos no las traen.
+_RE_PERSONAS = re.compile(
+    r"(?:personas?\b[^:\n]{0,60}|recib(?:e|en)\b[^:\n]{0,40}):[ \t]*(.+)", re.I
+)
+_RE_SEPARADOR_PERSONAS = re.compile(r"\s*(?:,|;|/|\by\b)\s*", re.I)
+
+
+def extraer_personas_autorizadas(cuerpo: str) -> list[str]:
+    # Solo el texto anterior al primer encabezado de mensaje reenviado ("De:").
+    cuerpo = re.split(r"(?im)^\s*de\s*:", cuerpo or "", maxsplit=1)[0]
+    m = _RE_PERSONAS.search(cuerpo)
+    if not m:
+        return []
+    nombres = [n.strip(" .\t\r") for n in _RE_SEPARADOR_PERSONAS.split(m.group(1))]
+    return [n for n in nombres if len(n) > 2]
 
 
 def _clasificar_adjuntos(
@@ -91,8 +126,9 @@ def _clasificar_adjuntos(
     destino_dir: Path,
     asunto: str,
     crudos: list[tuple[str, bytes]],
+    cuerpo: str = "",
 ) -> AdjuntosCorreo:
-    resultado = AdjuntosCorreo(asunto=asunto)
+    resultado = AdjuntosCorreo(asunto=asunto, personas_autorizadas=extraer_personas_autorizadas(cuerpo))
     for nombre, datos in crudos:
         destino = destino_dir / nombre
         with open(destino, "wb") as out:
@@ -160,5 +196,5 @@ def extraer_adjuntos(correo_path: str | Path, destino_dir: str | Path) -> Adjunt
             f"Formato de correo no soportado: '{correo_path.suffix}' "
             f"(se espera .eml o .msg) — {correo_path.name}"
         )
-    asunto, crudos = lector(correo_path)
-    return _clasificar_adjuntos(correo_path, destino_dir, asunto, crudos)
+    asunto, cuerpo, crudos = lector(correo_path)
+    return _clasificar_adjuntos(correo_path, destino_dir, asunto, crudos, cuerpo)

@@ -31,6 +31,16 @@ Reglas de detección sobre los párrafos con texto a partir del índice 3:
       como domicilio de entrega (informativo).
     - Duplicados exactos del representante legal se ignoran.
 
+Formato vigente desde 2026-09-23 (el usuario acordó con quien redacta la
+ficha que a partir de ahora siempre venga así; los clientes anteriores no
+lo traen y no se reprocesan):
+
+    - Una línea "EL PAQUETE SE ENVIA A ESTE DOMICILIO:FISCAL" o
+      "...:ENTREGA" indica a cuál domicilio se envía (cliente.envio_a).
+    - Rótulos "DOMICILIO FISCAL" y "DOMICILIO DE ENTREGA" (a veces solo
+      "ENTREGA") encabezan el bloque de cada domicilio; cada domicilio se
+      asigna al bloque en que aparece, sin depender de su orden.
+
 Si no se puede identificar alguno de los campos requeridos (domicilio, RFC,
 teléfono, correo), se lanza DatosIncompletosError en vez de adivinar.
 """
@@ -38,6 +48,7 @@ teléfono, correo), se lanza DatosIncompletosError en vez de adivinar.
 from __future__ import annotations
 
 import re
+import unicodedata
 import zipfile
 from pathlib import Path
 
@@ -53,6 +64,49 @@ _RE_TELEFONO = re.compile(r"^\d{10}$")
 _RE_CORREO_LABEL = re.compile(r"^correo\s*electr[oó]nico\s*:?\s*(.+)$", re.IGNORECASE)
 
 
+_RE_ENVIO = re.compile(
+    r"EL PAQUETE SE ENVIA A ESTE DOMICILIO\s*:?\s*(?:DOMICILIO\s+DE\s+)?(FISCAL|ENTREGA)"
+)
+
+
+def _sin_acentos(texto: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    )
+
+
+def _clasificar_etiqueta(p: str) -> str | None:
+    """None si `p` es un dato; si es un rótulo/banner devuelve 'envio' (línea
+    'EL PAQUETE SE ENVIA...'), 'fiscal' o 'entrega' (encabezado de bloque)."""
+    u = _sin_acentos(p.strip().upper())
+    if u.startswith("EL PAQUETE SE ENVIA"):
+        return "envio"
+    if u in {"DOMICILIO FISCAL", "FISCAL"}:
+        return "fiscal"
+    if u in {"ENTREGA", "DOMICILIO DE ENTREGA", "DOMICILIO ENTREGA"}:
+        return "entrega"
+    return None
+
+
+def _asignar_domicilio(cliente, raw: str, prefijo: str, nombre: str) -> None:
+    """Separa un domicilio de 8 componentes (calle, número, colonia, ciudad,
+    municipio, estado, CP, país) en los atributos `<prefijo>_<componente>`."""
+    componentes = [c.strip() for c in raw.split(",")]
+    if len(componentes) == 8:
+        for campo, valor in zip(
+            ("calle", "numero", "colonia", "ciudad", "municipio", "estado", "cp", "pais"),
+            componentes,
+        ):
+            setattr(cliente, f"{prefijo}_{campo}", valor)
+    else:
+        setattr(cliente, f"{prefijo}_calle", raw)
+        cliente.agregar_alerta(
+            f"El domicilio {nombre} tiene {len(componentes)} componentes separados por "
+            f"coma (se esperaban 8); se guardó sin separar en "
+            f"{prefijo}_calle. Revisar manualmente: {raw!r}"
+        )
+
+
 def _parrafos(docx_path: Path) -> list[str]:
     with zipfile.ZipFile(docx_path) as z:
         xml = z.read("word/document.xml").decode("utf-8")
@@ -66,7 +120,25 @@ def _parrafos(docx_path: Path) -> list[str]:
 def extraer_ficha(docx_path: str | Path) -> ClienteContrato:
     docx_path = Path(docx_path)
     parrafos = _parrafos(docx_path)
-    no_vacios = [p.strip() for p in parrafos if p.strip()]
+    # Se quitan los rótulos/banners antes de asignar posiciones fijas y se
+    # recuerda a qué bloque (fiscal/entrega) pertenece cada línea de datos.
+    items: list[tuple[str, str | None]] = []
+    seccion: str | None = None
+    banners: list[str] = []
+    for p in (x.strip() for x in parrafos):
+        if not p:
+            continue
+        tipo = _clasificar_etiqueta(p)
+        if tipo == "envio":
+            banners.append(p)
+        elif tipo in ("fiscal", "entrega"):
+            seccion = tipo
+        else:
+            items.append((p, seccion))
+    no_vacios = [p for p, _ in items]
+    seccion_de = {}
+    for p, sec in items:
+        seccion_de.setdefault(p, sec)
 
     if len(no_vacios) < _CAMPOS_MINIMOS:
         raise DatosIncompletosError(
@@ -112,8 +184,6 @@ def extraer_ficha(docx_path: str | Path) -> ClienteContrato:
         nombre
         for nombre, valor in (
             ("domicilio", domicilios),
-            ("RFC", rfc),
-            ("teléfono", telefono),
             ("correo", correo),
         )
         if not valor
@@ -130,16 +200,32 @@ def extraer_ficha(docx_path: str | Path) -> ClienteContrato:
             f"('{numero_cuenta}') fuera el número de cuenta (solo dígitos)."
         )
 
-    domicilio_raw = domicilios[0]
+    dom_entrega = [d for d in domicilios if seccion_de.get(d) == "entrega"]
+    dom_fiscal = [d for d in domicilios if seccion_de.get(d) != "entrega"] or domicilios[:1]
+    if dom_fiscal[0] in dom_entrega:
+        dom_entrega = [d for d in dom_entrega if d != dom_fiscal[0]]
+    domicilio_raw = dom_fiscal[0]
 
     cliente = ClienteContrato(
         razon_social=razon_social,
         numero_cuenta=numero_cuenta,
         representante_legal=representante,
-        rfc=rfc,
-        telefono=telefono,
+        rfc=rfc or "",
+        telefono=telefono or "",
         correo=correo,
     )
+    # RFC: la fuente oficial es LAYOUT DE VINCULACION (vinculacion_extractor),
+    # así que puede faltar en la ficha (visto en FERTI GREEN, 2026-09-23).
+    # Teléfono: solo viene en la ficha (los teléfonos de SAE/control son las
+    # líneas a renovar, no un contacto del cliente); si falta se deja en
+    # blanco con alerta, nunca se inventa (visto en SERVICIOS PROFESIONALES
+    # HERNANDEZ NUÑO, 2026-09-23).
+    if not telefono:
+        cliente.campos_faltantes.append("telefono")
+        cliente.agregar_alerta(
+            "La ficha no trae teléfono del cliente; el CONTRATO queda sin teléfono "
+            "(hay que capturarlo manualmente)."
+        )
     cliente.origen["razon_social"] = docx_path.name
     cliente.origen["numero_cuenta"] = docx_path.name
     cliente.origen["representante_legal"] = docx_path.name
@@ -147,34 +233,39 @@ def extraer_ficha(docx_path: str | Path) -> ClienteContrato:
     cliente.origen["telefono"] = docx_path.name
     cliente.origen["correo"] = docx_path.name
 
-    componentes = [c.strip() for c in domicilio_raw.split(",")]
-    if len(componentes) == 8:
-        (
-            cliente.domicilio_calle,
-            cliente.domicilio_numero,
-            cliente.domicilio_colonia,
-            cliente.domicilio_ciudad,
-            cliente.domicilio_municipio,
-            cliente.domicilio_estado,
-            cliente.domicilio_cp,
-            cliente.domicilio_pais,
-        ) = componentes
-        cliente.origen["domicilio"] = docx_path.name
-    else:
-        cliente.domicilio_calle = domicilio_raw
+    _asignar_domicilio(cliente, domicilio_raw, "domicilio", "fiscal")
+    cliente.origen["domicilio"] = docx_path.name
+
+    if dom_entrega:
+        cliente.domicilio_entrega_raw = dom_entrega[0]
+        _asignar_domicilio(cliente, dom_entrega[0], "domicilio_entrega", "de entrega")
+    elif len(dom_fiscal) > 1:
+        # Ficha sin rótulos con un 2º domicilio (formato anterior a 2026-09-23).
+        cliente.domicilio_entrega_raw = dom_fiscal[1]
         cliente.agregar_alerta(
-            f"El domicilio tiene {len(componentes)} componentes separados por "
-            f"coma (se esperaban 8); se guardó sin separar en "
-            f"domicilio_calle. Revisar manualmente: {domicilio_raw!r}"
+            f"La ficha trae {len(dom_fiscal) - 1} domicilio(s) más sin rotular "
+            f"({dom_fiscal[1:]!r}); se ignoran, se usa solo el primero como fiscal."
         )
 
-    if len(domicilios) > 1:
-        cliente.domicilio_entrega_raw = domicilios[1]
+    destino = None
+    for b in banners:
+        m = _RE_ENVIO.search(_sin_acentos(b.upper()))
+        if m:
+            destino = m.group(1)
+            break
+    if destino is None:
+        cliente.envio_a = "FISCAL"
         cliente.agregar_alerta(
-            "La ficha trae un segundo domicilio distinto al fiscal "
-            f"(posible domicilio de entrega): {domicilios[1]!r}. Por ahora "
-            "se usa solo el domicilio fiscal en contrato/OP; revisar si "
-            "corresponde diferenciar entrega vs. fiscal."
+            "La ficha no indica a qué domicilio se envía el paquete (línea "
+            "'EL PAQUETE SE ENVIA A ESTE DOMICILIO:...'); se asumió FISCAL."
+        )
+    else:
+        cliente.envio_a = destino
+    if cliente.envio_a == "ENTREGA" and not cliente.domicilio_entrega_raw:
+        raise DatosIncompletosError(
+            f"'{docx_path.name}' indica que el paquete se envía al domicilio de "
+            f"ENTREGA pero no se encontró ese domicilio en la ficha. "
+            f"Párrafos: {no_vacios!r}"
         )
 
     if sin_identificar:

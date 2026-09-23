@@ -17,6 +17,10 @@
     "domicilio_colonia": {"bbox": [250.0, 309.0, 354.0, 317.8], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "x1 ampliado de 299 a 354 el 2026-09-22 (verificado contra el machote en blanco con PyMuPDF: la etiqueta 'Correspondencia' de la fila de arriba, y hasta 308.5, se solapa en x pero está en otra franja y (no invade); el campo domicilio_ciudad_estado_cp empieza en x=358 en la MISMA fila y con una línea vertical dibujada desde y=317.89, justo debajo de este campo (y1=317.8), así que no hay colisión real hasta x=358 — se dejaron 4pt de margen. Antes (x1=299, 49pt) colonias largas como 'FRACC PASEO RESIDENCIAL' no cabían ni al tamaño mínimo (4pt); con 104pt caben a ~7.5pt."},
     "domicilio_ciudad_estado_cp": {"bbox": [358.0, 305.5, 546.0, 317.8], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "Del./Municipio, Estado y C.P. en una sola línea con espaciado fijo"},
     "telefono_2": {"bbox": [549.1, 305.5, 592.0, 317.9], "font": "ArialMT", "size": 7.0, "align": "left"},
+    "domicilio_entrega_calle_numero": {"bbox": [34.0, 332.9, 280.0, 345.2], "font": "ArialMT", "size": 9.0, "align": "left", "opcional": true, "nota": "Fila 'Domicilio Entrega Calle y Número Ext. e Int' (solo cuando la ficha indica envío a ENTREGA). Misma altura relativa que la fila fiscal (renglón de datos bajo la fila de etiquetas y=318-328); columna de colonia empieza en x=283 (borde superior dibujado 283.2-358.2)."},
+    "domicilio_entrega_colonia": {"bbox": [283.5, 336.4, 355.0, 345.2], "font": "ArialMT", "size": 9.0, "align": "left", "opcional": true},
+    "domicilio_entrega_ciudad_estado_cp": {"bbox": [358.0, 332.9, 546.0, 345.2], "font": "ArialMT", "size": 9.0, "align": "left", "opcional": true, "nota": "Delegación/Municipio, Estado y C.P. en una sola línea, igual que la fila fiscal"},
+    "telefono_entrega": {"bbox": [549.1, 332.9, 592.0, 345.2], "font": "ArialMT", "size": 7.0, "align": "left", "opcional": true},
     "persona_autorizada_recibir_equipos": {"bbox": [22.3, 362.9, 592.0, 375.2], "font": "ArialMT", "size": 9.0, "align": "left", "prefijo": ": "},
     "tipo_identificacion_oficial": {"bbox": [130.9, 379.4, 160.0, 391.7], "font": "ArialMT", "size": 9.0, "align": "left", "nota": "etiqueta 'No. Identificación Oficial' (parte de la imagen de fondo) empieza aprox. en x=168-170, no ampliar"},
     "numero_identificacion_oficial": {"bbox": [187.9, 388.6, 280.0, 400.9], "font": "ArialMT", "size": 9.0, "align": "left"},
@@ -42,7 +46,8 @@
     "autorizo_factura_correo_acepto": {"bbox": [56.2, 604.0, 62.8, 618.3], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
     "tipo_plazo_minimo": {"bbox": [119.0, 429.6, 125.7, 444.0], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
     "domicilio_fiscal_es_dom_entrega": {"bbox": [192.8, 292.0, 199.5, 306.3], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
-    "domicilio_fiscal_es_correspondencia": {"bbox": [260.8, 292.0, 267.5, 306.3], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"}
+    "domicilio_fiscal_es_correspondencia": {"bbox": [260.8, 292.0, 267.5, 306.3], "font": "Arial-BoldMT", "size": 10.0, "marca": "X"},
+    "domicilio_entrega_es_correspondencia": {"bbox": [199.8, 319.3, 206.5, 333.6], "font": "Arial-BoldMT", "size": 10.0, "marca": "X", "nota": "Casilla 'Correspondencia' de la fila Domicilio Entrega (caja gris 198.2-207.3 x 319.4-331.1). bbox con los mismos márgenes relativos que las casillas de la fila fiscal (más angosto que la caja para que la redacción no la borre)."}
   },
   "paginas_fijas": [1, 2],
   "_nota_paginas_fijas": "Páginas 2 y 3 (índice 1 y 2) verificadas 100% idénticas entre los dos ejemplos reales; se copian sin tocar."

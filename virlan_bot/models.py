@@ -49,10 +49,24 @@ class ClienteContrato:
     telefono: str = ""
     correo: str = ""
 
-    # Domicilio de entrega, cuando la ficha trae uno distinto al fiscal
-    # (informativo por ahora; ver [[domicilio-entrega-pendiente]] en memoria
-    # del proyecto). No se usa todavía para llenar contrato/OP.
+    # A qué domicilio se envía el paquete, según la línea "EL PAQUETE SE ENVIA
+    # A ESTE DOMICILIO:<FISCAL|ENTREGA>" de la ficha (regla del usuario
+    # 2026-09-23). "ENTREGA" => el CONTRATO llena también la fila de Domicilio
+    # de Entrega y la OP usa ese domicilio como Dirección de Entrega.
+    envio_a: str = "FISCAL"
+
+    # Domicilio de entrega (bloque "DOMICILIO DE ENTREGA" de la ficha). Mismos
+    # 8 componentes que el fiscal: calle, número, colonia, ciudad, municipio,
+    # estado, CP, país.
     domicilio_entrega_raw: str = ""
+    domicilio_entrega_calle: str = ""
+    domicilio_entrega_numero: str = ""
+    domicilio_entrega_colonia: str = ""
+    domicilio_entrega_ciudad: str = ""
+    domicilio_entrega_municipio: str = ""
+    domicilio_entrega_estado: str = ""
+    domicilio_entrega_cp: str = ""
+    domicilio_entrega_pais: str = ""
 
     # De LAYOUT DE VINCULACION (join por numero_cuenta)
     rfc: str = ""
@@ -72,6 +86,13 @@ class ClienteContrato:
 
     def domicilio_ciudad_estado_cp(self) -> str:
         partes = [self.domicilio_ciudad, self.domicilio_estado, self.domicilio_cp]
+        return ", ".join(p for p in partes if p)
+
+    def entrega_calle_numero(self) -> str:
+        return ", ".join(p for p in (self.domicilio_entrega_calle, self.domicilio_entrega_numero) if p)
+
+    def entrega_ciudad_estado_cp(self) -> str:
+        partes = [self.domicilio_entrega_ciudad, self.domicilio_entrega_estado, self.domicilio_entrega_cp]
         return ", ".join(p for p in partes if p)
 
     def agregar_alerta(self, mensaje: str) -> None:

@@ -26,12 +26,9 @@ lista de precios sí la incluye ('SAMSUNG GALAXY A14 4G 128GB'). Por eso el
 match acepta también que 'Familia' termine en " " + equipo (con límite de
 palabra), no solo la igualdad exacta.
 
-Si no hay coincidencia exacta (ej. equipo descontinuado, ya no aparece en la
-lista vigente), se busca un sustituto con equipo_matching.mejor_sustituto:
-misma capacidad en GB y misma conectividad (4G/5G/LTE) son obligatorias, el
-resto es "el más similar". Regla confirmada por el usuario — ver
-equipo_matching.py. Un resultado sustituto siempre trae `es_sustituto=True`
-y debe alertarse para revisión manual antes de enviar.
+Si no hay el MISMO modelo (ej. equipo descontinuado) NO se usa el precio de otro
+equipo (regla del usuario 2026-09-23): se lanza EquipoNoEncontradoError con el
+motivo y una sugerencia (que no se usa) para consultar.
 
 Si se pasan `numero_plan` y `plazo_meses`, además se lee de la misma fila
 'Pago inicial/Diferencial de equipo' (ver `_columna_diferencial`): la hoja
@@ -50,9 +47,7 @@ from pathlib import Path
 
 import openpyxl
 
-from collections import Counter
-
-from .equipo_matching import equipo_coincide, mejor_sustituto
+from .equipo_matching import buscar_coincidencias, sugerencia_para_aviso
 
 _HOJA = "Precios"
 _FILA_ENCABEZADOS = 3
@@ -98,7 +93,6 @@ class PrecioEquipo:
     familia: str
     precio_lista: float
     fila: int
-    es_sustituto: bool = False
     diferencial_equipo: float | None = None
 
 
@@ -111,14 +105,12 @@ def buscar_precio_lista(
 ) -> PrecioEquipo:
     fecha = fecha or _dt.date.today()
     equipo_norm = equipo.strip().upper()
-    equipo_tokens = Counter(equipo_norm.split())
     columna_diferencial = _columna_diferencial(numero_plan, plazo_meses)
 
     wb = openpyxl.load_workbook(lista_precios_xlsx, data_only=True, read_only=True)
     try:
         ws = wb[_HOJA]
-        coincidencias = []
-        vigentes = []  # (familia, PrecioEquipo) — para fallback de sustituto
+        vigentes = []  # (familia_normalizada, PrecioEquipo)
         for fila in ws.iter_rows(min_row=_FILA_ENCABEZADOS + 1):
             familia = fila[_COL_FAMILIA - 1].value
             if not familia:
@@ -138,16 +130,18 @@ def buscar_precio_lista(
             diferencial = None
             if columna_diferencial is not None:
                 valor_diferencial = fila[columna_diferencial - 1].value
-                if valor_diferencial is not None:
+                # La lista trae '-' (u otro texto) cuando el equipo no se ofrece
+                # en esa combinación plan/plazo: se trata como "sin dato".
+                if isinstance(valor_diferencial, (int, float)):
                     diferencial = float(valor_diferencial)
             candidato = PrecioEquipo(
                 str(familia), float(precio), fila[0].row, diferencial_equipo=diferencial
             )
             vigentes.append((familia_norm, candidato))
-            if equipo_coincide(equipo_tokens, familia_norm):
-                coincidencias.append(candidato)
     finally:
         wb.close()
+
+    coincidencias = buscar_coincidencias(equipo_norm, vigentes)
 
     if len(coincidencias) > 1:
         raise EquipoNoEncontradoError(
@@ -158,14 +152,8 @@ def buscar_precio_lista(
     if coincidencias:
         return coincidencias[0]
 
-    sustituto = mejor_sustituto(equipo_norm, vigentes)
-    if sustituto is not None:
-        resultado = sustituto.payload
-        resultado.es_sustituto = True
-        return resultado
-
     raise EquipoNoEncontradoError(
-        f"No se encontró '{equipo}' vigente al {fecha} en la hoja "
-        f"'{_HOJA}' de '{Path(lista_precios_xlsx).name}', ni un sustituto "
-        f"con la misma capacidad y conectividad."
+        f"No se encontró el MISMO modelo de '{equipo}' vigente al {fecha} en la hoja "
+        f"'{_HOJA}' de '{Path(lista_precios_xlsx).name}'; no se usa el precio de un "
+        f"equipo distinto, consultar por qué no aparece ({sugerencia_para_aviso(equipo, vigentes)})."
     )

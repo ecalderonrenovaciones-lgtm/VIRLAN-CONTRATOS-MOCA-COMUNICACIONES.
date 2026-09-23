@@ -70,3 +70,6 @@ ENTREGA_POR_DEFECTO = {
     "dias_habiles_entrega": 14,
     "hora_entrega": "9            18",
 }
+
+# Peso máximo por PDF generado (pedido del usuario 2026-09-23: 700 KB).
+LIMITE_PDF_KB = 700

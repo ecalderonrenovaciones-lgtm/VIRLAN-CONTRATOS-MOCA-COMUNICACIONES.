@@ -14,10 +14,9 @@ Estructura verificada de la hoja 'Master' (fila 1 encabezados):
   A Marca   B Modelo (llave de búsqueda)   C Precio inicial   D Precio Base
   E Baja de Precio   F Fecha Baja Precio
 
-Si no hay coincidencia exacta, se busca un sustituto con
-equipo_matching.mejor_sustituto (misma capacidad en GB y misma conectividad
-obligatorias) — ver catalogo_precios.py para el mismo mecanismo aplicado a
-la lista de precios. El resultado trae `es_sustituto=True` y debe alertarse.
+Si no hay el MISMO modelo NO se usa el precio de otro equipo (regla del usuario
+2026-09-23): se lanza EquipoNoEncontradoError con el motivo y una sugerencia
+(que no se usa) para consultar.
 """
 
 from __future__ import annotations
@@ -28,9 +27,7 @@ from pathlib import Path
 
 import openpyxl
 
-from collections import Counter
-
-from .equipo_matching import equipo_coincide, mejor_sustituto
+from .equipo_matching import buscar_coincidencias, sugerencia_para_aviso
 
 _HOJA = "Master"
 _COL_MODELO = 2  # B
@@ -46,7 +43,6 @@ class ResultadoMPE:
     precio_base: float
     mpe: float
     fila: int
-    es_sustituto: bool = False
 
 
 def _truncar(valor: float, decimales: int = 2) -> float:
@@ -61,13 +57,11 @@ def calcular_mpe(
     pie: float = 0.0,
 ) -> ResultadoMPE:
     equipo_norm = equipo.strip().upper()
-    equipo_tokens = Counter(equipo_norm.split())
 
     wb = openpyxl.load_workbook(calculo_mpe_xlsx, data_only=True, read_only=True)
     try:
         ws = wb[_HOJA]
-        coincidencias = []
-        candidatos = []  # (modelo_norm, (precio_base, fila)) — fallback de sustituto
+        candidatos = []  # (modelo_norm, (precio_base, fila))
         for fila in ws.iter_rows(min_row=2):
             modelo = fila[_COL_MODELO - 1].value
             if not modelo:
@@ -77,10 +71,10 @@ def calcular_mpe(
             if precio_base is None:
                 continue
             candidatos.append((modelo_norm, (float(precio_base), fila[0].row)))
-            if equipo_coincide(equipo_tokens, modelo_norm):
-                coincidencias.append((float(precio_base), fila[0].row))
     finally:
         wb.close()
+
+    coincidencias = buscar_coincidencias(equipo_norm, candidatos)
 
     if len(coincidencias) > 1:
         raise EquipoNoEncontradoError(
@@ -89,22 +83,26 @@ def calcular_mpe(
             f"{[f for _, f in coincidencias]}); revisar manualmente."
         )
 
-    es_sustituto = False
-    if coincidencias:
-        precio_base, fila_num = coincidencias[0]
-    else:
-        sustituto = mejor_sustituto(equipo_norm, candidatos)
-        if sustituto is None:
-            raise EquipoNoEncontradoError(
-                f"No se encontró '{equipo}' en la hoja '{_HOJA}' de "
-                f"'{Path(calculo_mpe_xlsx).name}', ni un sustituto con la "
-                f"misma capacidad y conectividad."
-            )
-        precio_base, fila_num = sustituto.payload
-        es_sustituto = True
+    if not coincidencias:
+        raise EquipoNoEncontradoError(
+            f"No se encontró el MISMO modelo de '{equipo}' en la hoja '{_HOJA}' de "
+            f"'{Path(calculo_mpe_xlsx).name}'; no se usa el precio de un equipo "
+            f"distinto, consultar por qué no aparece "
+            f"({sugerencia_para_aviso(equipo, candidatos)})."
+        )
+    precio_base, fila_num = coincidencias[0]
 
     if not plazo_meses:
         raise ValueError("plazo_meses debe ser mayor a 0 para calcular el MPE.")
 
     mpe = _truncar((precio_base - pie) / int(plazo_meses) + 0.01, 2)
-    return ResultadoMPE(precio_base=precio_base, mpe=mpe, fila=fila_num, es_sustituto=es_sustituto)
+    return ResultadoMPE(precio_base=precio_base, mpe=mpe, fila=fila_num)
+
+
+def mpe_desde_lista(precio_lista: float, pie: float, plazo_meses: int) -> float:
+    """Criterio alternativo del MPE (regla del usuario 2026-09-23): (Precio de
+    lista - Diferencial de equipo unitario) / plazo contratado, con la misma
+    fórmula de la calculadora (TRUNC(x + 0.01, 2)). Verificado: coincide con la
+    calculadora en 37 de 38 líneas ya generadas (la excepción fue un equipo cuyo
+    precio en el Master difería del de la lista)."""
+    return _truncar((precio_lista - pie) / int(plazo_meses) + 0.01, 2)

@@ -41,12 +41,22 @@ def generar_paquete_revision(
     op_pdf: str | Path,
     salida_dir: str | Path,
     alertas_extra: list[str] | None = None,
+    ine_pdf: str | Path | None = None,
+    fecha_contratacion: str = "",
 ) -> Path:
     salida_dir = Path(salida_dir)
     salida_dir.mkdir(parents=True, exist_ok=True)
 
     imagenes_contrato = _renderizar_paginas(Path(contrato_pdf), salida_dir, "contrato")
     imagenes_op = _renderizar_paginas(Path(op_pdf), salida_dir, "op")
+
+    # La fecha de cotejo va escrita a mano en el INE: se muestra la imagen para
+    # que quien revisa confirme que coincide con la fecha usada.
+    if ine_pdf:
+        imagen_ine = _renderizar_paginas(Path(ine_pdf), salida_dir, "ine_cotejo", dpi=90)[:1]
+        ine_html = "".join(f"<img src='{n}' alt='INE con cotejo'>" for n in imagen_ine)
+    else:
+        ine_html = "<p class='ok' style='color:#b00'>No se encontró un adjunto INE_*.pdf en el correo.</p>"
 
     campos_relevantes = [
         "razon_social", "numero_cuenta", "representante_legal", "rfc",
@@ -110,6 +120,10 @@ def generar_paquete_revision(
 
   <h2>Líneas a renovar</h2>
   <table><tr><th>Teléfono</th><th>Plan</th><th>Plazo</th><th>Equipo</th><th>Origen</th></tr>{filas_lineas}</table>
+
+  <h2>Fecha de contratación usada: {html.escape(fecha_contratacion)}</h2>
+  <p>Debe coincidir con la fecha de cotejo escrita a mano en el INE:</p>
+  {ine_html}
 
   <h2>CONTRATO generado</h2>
   {imgs_contrato_html}

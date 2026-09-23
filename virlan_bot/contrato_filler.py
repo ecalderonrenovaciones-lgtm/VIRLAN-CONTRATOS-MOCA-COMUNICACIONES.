@@ -145,8 +145,12 @@ def llenar_contrato(
     for nombre, spec in campos_texto.items():
         if nombre in valores and valores[nombre]:
             bboxes_a_redactar.append(spec["bbox"])
-        else:
+        elif not spec.get("opcional"):
             resultado.campos_omitidos.append(nombre)
+            # El machote es un contrato reciclado de otro cliente: un campo sin
+            # valor debe quedar EN BLANCO, nunca con el dato del cliente anterior
+            # (visto en HERNANDEZ NUÑO: sin teléfono en la ficha salía el del machote).
+            bboxes_a_redactar.append(spec["bbox"])
 
     if rfc_cliente:
         bboxes_a_redactar.append(fieldmap["campo_rfc_cliente"]["bbox"])

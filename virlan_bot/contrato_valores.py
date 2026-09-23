@@ -52,13 +52,11 @@ def construir_valores_contrato(
             f"representante legal ({cliente.representante_legal}) por defecto."
         )
 
+    # Regla CONFIRMADA por el usuario (2026-09-22 y 2026-09-23): fecha máxima de
+    # entrega = fecha de contratación + 14 días naturales, y la fecha de
+    # contratación es la fecha de cotejo manuscrita en el INE_*.pdf (ver cli.py).
     fecha_maxima_entrega = fecha_contratacion + _dt.timedelta(
         days=config.ENTREGA_POR_DEFECTO["dias_habiles_entrega"]
-    )
-    alertas.append(
-        f"Fecha máxima de entrega calculada como fecha de contratación + "
-        f"{config.ENTREGA_POR_DEFECTO['dias_habiles_entrega']} días naturales "
-        f"(regla aproximada, confirmar con el usuario)."
     )
 
     valores: dict[str, str] = dict(config.VENDEDOR_POR_DEFECTO)
@@ -75,6 +73,13 @@ def construir_valores_contrato(
     valores["domicilio_calle_numero"] = cliente.domicilio_calle_numero()
     valores["domicilio_colonia"] = cliente.domicilio_colonia
     valores["domicilio_ciudad_estado_cp"] = cliente.domicilio_ciudad_estado_cp()
+    if cliente.envio_a == "ENTREGA":
+        # Regla del usuario 2026-09-23: si el paquete va al domicilio de
+        # ENTREGA, además del fiscal se llena la fila 'Domicilio Entrega'.
+        valores["domicilio_entrega_calle_numero"] = cliente.entrega_calle_numero()
+        valores["domicilio_entrega_colonia"] = cliente.domicilio_entrega_colonia
+        valores["domicilio_entrega_ciudad_estado_cp"] = cliente.entrega_ciudad_estado_cp()
+        valores["telefono_entrega"] = cliente.telefono  # mismo teléfono del cliente
     valores["tipo_identificacion_oficial"] = cliente.tipo_identificacion
     valores["numero_identificacion_oficial"] = cliente.numero_identificacion
     valores["correo_electronico"] = cliente.correo
