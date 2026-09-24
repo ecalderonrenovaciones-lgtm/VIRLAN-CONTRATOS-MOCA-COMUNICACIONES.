@@ -1,7 +1,7 @@
 """Punto de entrada manual del bot.
 
 Uso:
-    py -m virlan_bot.cli procesar --eml "ruta\\al\\correo.eml" [--tipo-venta RENOVACION] [--persona-autorizada "Nombre" [--persona-autorizada "Otro"]] [--fecha-contratacion DD-MM-AAAA]
+    py -m virlan_bot.cli procesar --eml "ruta\\al\\correo.eml" [--tipo-venta RENOVACION] [--persona-autorizada "Nombre" [--persona-autorizada "Otro"]] [--fecha-contratacion DD-MM-AAAA] [--sufijo ADICIONES] [--solo-contrato] [--ejecutivo "Nombre" [--rfc-ejecutivo X] [--punto-venta-nombre X] [--punto-venta-codigo X]]
 
 --eml acepta tanto .eml como .msg (formato nativo de Outlook) — ver
 eml_reader.py.
@@ -90,9 +90,13 @@ def _limpiar_op_obsoletas(carpeta: Path, vigentes: list[str]) -> list[str]:
                     viejo.unlink()
                 except OSError:
                     avisos.append(f"No se pudo borrar el archivo obsoleto {viejo} (¿abierto?); bórralo a mano.")
-    if "op_borrador" not in vigentes:
-        for png in carpeta.glob("op_p*.png"):
-            png.unlink(missing_ok=True)
+    # Imágenes de revisión de OP que ya no aplican (la de una OP única y las de
+    # OP EQUIPOS / OP SIM de una corrida anterior).
+    prefijos_png = {"op_borrador": "op_p*.png", "OP EQUIPOS": "op_equipos_p*.png", "OP SIM": "op_sim_p*.png"}
+    for nombre, patron in prefijos_png.items():
+        if nombre not in vigentes:
+            for png in carpeta.glob(patron):
+                png.unlink(missing_ok=True)
     return avisos
 
 
@@ -122,6 +126,9 @@ def procesar(
     tipo_venta: str | None,
     persona_autorizada: str | None,
     fecha_contratacion: _dt.date | None = None,
+    sufijo: str | None = None,
+    solo_contrato: bool = False,
+    vendedor: dict[str, str] | None = None,
 ) -> Path:
     eml_path = Path(eml_path)
     if not eml_path.exists():
@@ -151,7 +158,13 @@ def procesar(
             "RFC e identificación oficial no se pudieron completar."
         )
 
-    carpeta_salida = config.SALIDA_DIR / f"{cliente.numero_cuenta}_{_slug(cliente.razon_social)}"
+    # Sufijo opcional (ej. "ADICIONES"): permite que una MISMA cuenta tenga dos
+    # paquetes distintos (renovación y adición) sin que uno sobrescriba al otro
+    # (pedido del usuario 2026-09-24, CREA IMPRENTA).
+    sufijo_carpeta = f"_{_slug(sufijo)}" if sufijo and _slug(sufijo) else ""
+    carpeta_salida = (
+        config.SALIDA_DIR / f"{cliente.numero_cuenta}_{_slug(cliente.razon_social)}{sufijo_carpeta}"
+    )
     carpeta_salida.mkdir(parents=True, exist_ok=True)
 
     if not persona_autorizada and adjuntos.personas_autorizadas:
@@ -175,10 +188,20 @@ def procesar(
     if adjuntos.ine_pdf is None:
         alertas_fecha.append("No se encontró un adjunto INE_*.pdf; no se puede cotejar la fecha de contratación.")
 
+    if vendedor is None:
+        canal = config.detectar_canal(adjuntos.asunto)
+        if canal:
+            vendedor = dict(config.VENDEDORES_POR_CANAL[canal])
+            cliente.agregar_alerta(
+                f"Canal {canal} detectado en el asunto: se usó el vendedor de ese canal "
+                f"({vendedor['nombre_ejecutivo']}, punto de venta {vendedor['punto_venta_nombre']})."
+            )
+
     valores_contrato, alertas_contrato = construir_valores_contrato(
         cliente,
         persona_autorizada_recibir_equipos=persona_autorizada,
         fecha_contratacion=fecha_contratacion,
+        vendedor=vendedor,
     )
 
     checkbox_tipo_contratacion, tipo_venta_op = MAPA_TIPO[tipo_venta]
@@ -192,9 +215,42 @@ def procesar(
         valores=valores_contrato,
         rfc_cliente=cliente.rfc or None,
         checkboxes_activos=[checkbox_tipo_contratacion]
-        + _CHECKBOXES_COMUNES
+        + fieldmap.get("checkboxes_siempre", [])
         + _CHECKBOXES_POR_ENVIO[cliente.envio_a],
     )
+
+    if solo_contrato:
+        # Regenera ÚNICAMENTE el CONTRATO (ej. cuando cambia el formato del contrato)
+        # y no toca las OP existentes del cliente (ni en salida/ ni en CONTRATOS TERMINADOS/).
+        opt = optimizar_pdf(contrato_pdf, config.LIMITE_PDF_KB)
+        print(f"Tamaño {opt.archivo}: {opt.kb_antes} KB -> {opt.kb_despues} KB (límite {config.LIMITE_PDF_KB} KB)")
+        ops_existentes = [
+            (n, carpeta_salida / f"{n}.pdf") for n in _NOMBRES_OP_CONOCIDOS if (carpeta_salida / f"{n}.pdf").exists()
+        ]
+        alertas_solo = (
+            alertas_fecha
+            + alertas_tipo
+            + alertas_contrato
+            + resultado_contrato.campos_omitidos
+            + [f"CONTRATO — desborde: {d}" for d in resultado_contrato.desbordes]
+            + ([opt.alerta] if opt.alerta else [])
+            + ["Corrida SOLO CONTRATO: las OP no se regeneraron (se muestran las que ya existían)."]
+        )
+        ruta_revision = generar_paquete_revision(
+            cliente=cliente,
+            contrato_pdf=contrato_pdf,
+            op_pdf=ops_existentes,
+            salida_dir=carpeta_salida,
+            alertas_extra=alertas_solo,
+            ine_pdf=adjuntos.ine_pdf,
+            fecha_contratacion=f"{fecha_contratacion:%d/%m/%Y}",
+        )
+        destino = config.CONTRATOS_TERMINADOS_DIR / carpeta_salida.name
+        destino.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(contrato_pdf, destino / "contrato_borrador.pdf")
+        print(f"CONTRATO generado: {contrato_pdf}")
+        print(f"Copia en CONTRATOS TERMINADOS: {destino / 'contrato_borrador.pdf'}")
+        return ruta_revision
 
     lista_precios = config.lista_precios_xlsx()
     calculo_mpe = config.calculo_mpe_xlsx()
@@ -257,6 +313,7 @@ def procesar(
             calculo_mpe_xlsx=calculo_mpe,
             oferta_comercial=oferta_comercial,
             fecha_contratacion=fecha_contratacion,
+            ejecutivo=(vendedor or {}).get("nombre_ejecutivo"),
         )
         exportar_op_a_pdf(op_xlsx, op_pdf)
         prefijo = f"[{nombre_op}] " if len(paquetes_op) > 1 else ""
@@ -328,13 +385,46 @@ def main(argv: list[str] | None = None) -> int:
         "contratación del CONTRATO y la OP. Si se omite se usa hoy, con alerta.",
     )
 
+    p_procesar.add_argument(
+        "--sufijo",
+        default=None,
+        help="Sufijo para el nombre de la carpeta del paquete (ej. ADICIONES), para que una misma "
+        "cuenta pueda tener dos paquetes (renovación y adición) sin sobrescribirse.",
+    )
+
+    p_procesar.add_argument(
+        "--solo-contrato",
+        action="store_true",
+        help="Regenera solo el CONTRATO (no toca las OP existentes del cliente).",
+    )
+
+    p_procesar.add_argument(
+        "--ejecutivo",
+        default=None,
+        help="Vendedor/ejecutivo cuando NO es el predeterminado (ej. canal ONE STOP: el que firma el "
+        "cotejo del INE). Va en el CONTRATO y en la OP.",
+    )
+    p_procesar.add_argument("--rfc-ejecutivo", default=None, help="RFC del ejecutivo (solo con --ejecutivo)")
+    p_procesar.add_argument("--punto-venta-nombre", default=None, help="Nombre del punto de venta (solo con --ejecutivo)")
+    p_procesar.add_argument("--punto-venta-codigo", default=None, help="Código del punto de venta (solo con --ejecutivo)")
+
     args = parser.parse_args(argv)
 
     if args.comando == "procesar":
         try:
             personas = " Y ".join(quitar_titulos(n).upper() for n in args.persona_autorizada or [] if n.strip())
             fecha = _parsear_fecha(args.fecha_contratacion) if args.fecha_contratacion else None
-            procesar(args.eml, args.tipo_venta, personas or None, fecha)
+            vendedor = None
+            if args.ejecutivo:
+                vendedor = {"nombre_ejecutivo": quitar_titulos(args.ejecutivo).upper()}
+                for clave, valor in (
+                    ("rfc_ejecutivo", args.rfc_ejecutivo),
+                    ("punto_venta_nombre", args.punto_venta_nombre),
+                    ("punto_venta_codigo", args.punto_venta_codigo),
+                ):
+                    if valor is not None:  # solo lo indicado; lo demás se avisa y queda en blanco
+                        vendedor[clave] = valor.strip().upper()
+            procesar(args.eml, args.tipo_venta, personas or None, fecha, args.sufijo, args.solo_contrato, vendedor)
         except DatosIncompletosError as e:
             print(f"ERROR — datos incompletos: {e}", file=sys.stderr)
             return 1

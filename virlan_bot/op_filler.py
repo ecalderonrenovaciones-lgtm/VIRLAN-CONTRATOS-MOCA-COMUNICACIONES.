@@ -123,6 +123,7 @@ _CHECKBOX_TIPO_VENTA = {
 }
 
 _TEXTBOX_FIRMA_SUSCRIPTOR = "TextBox 5"
+_TEXTBOX_VENDEDOR = "TextBox 13"  # "Nombre y Firma del Vendedor"
 
 # 3 shapes (no celdas — mismo caso que los checkboxes de Tipo de Venta) que
 # muestran los "Meses Gratis" en J12/K12/L12, de izquierda a derecha.
@@ -375,6 +376,7 @@ def llenar_op(
     calculo_mpe_xlsx: str | Path | None = None,
     oferta_comercial: OfertaComercial | None = None,
     fecha_contratacion: _dt.date | None = None,
+    ejecutivo: str | None = None,
 ) -> ResultadoOP:
     """Copia machote_xlsx a salida_xlsx y lo llena con los datos del cliente.
     Requiere Excel instalado (usa win32com para preservar las formas de los
@@ -434,6 +436,10 @@ def llenar_op(
             for nombre_shape in _CHECKBOX_TIPO_VENTA.values():
                 ws.Shapes(nombre_shape).TextFrame2.TextRange.Text = ""
             ws.Shapes(_CHECKBOX_TIPO_VENTA[tipo_venta]).TextFrame2.TextRange.Text = "X"
+
+            if ejecutivo:
+                # Recuadro "Nombre y Firma del Vendedor" (el machote trae fijo a Sergio Yair).
+                ws.Shapes(_TEXTBOX_VENDEDOR).TextFrame2.TextRange.Text = ejecutivo
 
             nombre_firma = cliente.representante_legal or "N/A"
             ws.Shapes(_TEXTBOX_FIRMA_SUSCRIPTOR).TextFrame2.TextRange.Text = nombre_firma

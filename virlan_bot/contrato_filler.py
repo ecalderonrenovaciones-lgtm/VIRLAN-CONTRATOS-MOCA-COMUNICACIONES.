@@ -119,17 +119,32 @@ def _insertar_rfc_en_casillas(
             f"se insertará tal cual, revisar manualmente."
         )
 
-    ancho_casilla = (bbox[2] - bbox[0]) / n
     baseline_y = bbox[3] - fontsize * 0.15
+    bordes = campo_rfc.get("bordes_casillas_12") if n == 12 else None
+    if n == 13 and campo_rfc.get("bbox_13"):
+        bbox = campo_rfc["bbox_13"]
+    ancho_casilla = (bbox[2] - bbox[0]) / n
     for i, ch in enumerate(rfc):
         ancho_char = _ancho_texto(ch, fontname, fontsize)
-        x = bbox[0] + i * ancho_casilla + (ancho_casilla - ancho_char) / 2
+        if bordes:  # una casilla dibujada por carácter
+            x = bordes[i] + (bordes[i + 1] - bordes[i] - ancho_char) / 2
+        else:
+            x = bbox[0] + i * ancho_casilla + (ancho_casilla - ancho_char) / 2
         page.insert_text(
             (x, baseline_y), ch, fontname=_fuente_pymupdf(fontname), fontsize=fontsize, color=(0, 0, 0)
         )
 
 
 def _insertar_checkbox(page: "fitz.Page", checkbox: dict) -> None:
+    if "origen" in checkbox:  # posición exacta del ejemplo (nueva versión del contrato)
+        page.insert_text(
+            tuple(checkbox["origen"]),
+            checkbox["marca"],
+            fontname=_fuente_pymupdf(checkbox["font"]),
+            fontsize=checkbox["size"],
+            color=(0, 0, 0),
+        )
+        return
     bbox = checkbox["bbox"]
     fontname = checkbox["font"]
     fontsize = checkbox["size"]
@@ -187,7 +202,13 @@ def llenar_contrato(
     # verse una X por casilla, nunca dos superpuestas.
     for checkbox in fieldmap["checkboxes"].values():
         if isinstance(checkbox, dict):  # se salta claves de metadata como "_nota"
-            bboxes_a_redactar.append(checkbox["bbox"])
+            if "bbox" in checkbox:  # las de 'origen' (nueva versión) no se borran: el machote va en blanco
+                bboxes_a_redactar.append(checkbox["bbox"])
+
+    if fieldmap.get("sin_redaccion"):
+        # El machote ya viene en blanco (sin datos de muestra): no hay nada que
+        # borrar y así no se toca ninguna línea ni casilla del formato.
+        bboxes_a_redactar = []
 
     for bbox in bboxes_a_redactar:
         page.add_redact_annot(fitz.Rect(bbox))

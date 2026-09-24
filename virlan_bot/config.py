@@ -18,7 +18,9 @@ PROYECTO_RAIZ = RAIZ.parent
 INTERCAMBIABLES_DIR = PROYECTO_RAIZ / "ARCHIVOS INTERCAMBIABLES"
 CONTRATOS_TERMINADOS_DIR = PROYECTO_RAIZ / "CONTRATOS TERMINADOS"
 
-MACHOTE_CONTRATO_PDF = INTERCAMBIABLES_DIR / "MACHOTE CONTRATOS" / "Contrato nueva versión NUEVO.pdf"
+# Nueva versión del contrato (ejemplo del usuario 2026-09-24), en blanco: ver scripts/crear_machote_nueva_version.py.
+# El machote anterior ("Contrato nueva versión NUEVO.pdf") + contrato_fieldmap.v1.json ya no se usan.
+MACHOTE_CONTRATO_PDF = INTERCAMBIABLES_DIR / "MACHOTE CONTRATOS" / "Contrato de servicios nueva versión (machote en blanco).pdf"
 MACHOTE_OP_XLSX = INTERCAMBIABLES_DIR / "MACHOTE CONTRATOS" / "08 Orden Program EBS.xlsx"
 DOCUMENTOS_CONSULTA_DIR = INTERCAMBIABLES_DIR / "DOCUMENTOS CONSULTA"
 SALIDA_DIR = RAIZ / "salida"
@@ -48,7 +50,7 @@ def ladas_csv() -> Path | None:
     # 'ladas_mexico Final.csv'); se localiza por prefijo en vez de nombre exacto.
     return _mas_reciente("ladas_mexico*.csv") or _mas_reciente("*ladas*mexico*.csv")
 
-CONTRATO_FIELDMAP_VERSION = "v1"
+CONTRATO_FIELDMAP_VERSION = "v2"
 
 # Datos del punto de venta/ejecutivo: en los dos ejemplos reales disponibles
 # fueron siempre los mismos (mismo distribuidor/ejecutivo), y no vienen en
@@ -66,6 +68,31 @@ VENDEDOR_POR_DEFECTO = {
 # Igual que arriba: en los dos ejemplos reales la fecha/hora máxima de
 # entrega fue idéntica (ventana estándar de entrega). Se deja como
 # configurable por si cambia.
+# Vendedor por canal de venta (2026-09-24). El canal se lee del asunto del correo
+# ("CENTRO // DEALERS // ONE STOP // ..."); PRIME/FES PRIMECOMMS usa VENDEDOR_POR_DEFECTO.
+# Datos de ONE STOP tomados del ejemplo que compartió el usuario
+# ("EJEMPLO DE CONTRATOS/Contrato de servicios nueva versión ONE STOCK.pdf"): el ejecutivo
+# es quien firma el cotejo del INE; ese formato no trae código de punto de venta (el
+# código AC425E va dentro del nombre), por eso queda vacío a propósito.
+VENDEDORES_POR_CANAL = {
+    "ONE STOP": {
+        "nombre_ejecutivo": "ALEJANDRO CASTERA ARELLANOS",
+        "rfc_ejecutivo": "CAAA760226LJ4",
+        "punto_venta_nombre": "ONE STOP MARKET AC425E",
+        "punto_venta_codigo": "",
+    },
+}
+
+
+def detectar_canal(asunto: str) -> str | None:
+    """'ONE STOP' si el asunto lo menciona (también 'ONE STOCK'), si no None."""
+    import re
+
+    if re.search(r"ONE\s*STO(?:P|CK)", asunto or "", re.I):
+        return "ONE STOP"
+    return None
+
+
 ENTREGA_POR_DEFECTO = {
     "dias_habiles_entrega": 14,
     "hora_entrega": "9            18",

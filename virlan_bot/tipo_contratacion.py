@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import re
 
-_PATRON_ADICION = re.compile(r"\bADICI[OÓ]N\b", re.I)
+# Acepta plural ("ADICIONES", visto en CREA IMPRENTA 2026-09-24).
+_PATRON_ADICION = re.compile(r"\bADICI[OÓ]N(?:ES)?\b", re.I)
 _PATRON_NUEVA = re.compile(r"\b(SUSCRIPCI[OÓ]N\s+NUEVA|VENTA\s+NUEVA|ALTA\s+NUEVA|\bNUEVA\b)", re.I)
-_PATRON_RENOVACION = re.compile(r"\bRENOVACI[OÓ]N\b", re.I)
+_PATRON_RENOVACION = re.compile(r"\bRENOVACI[OÓ]N(?:ES)?\b", re.I)
 
 # nombre del checkbox en contrato_fieldmap.v1.json -> valor de TIPO DE VENTA en la OP
 MAPA_TIPO = {
