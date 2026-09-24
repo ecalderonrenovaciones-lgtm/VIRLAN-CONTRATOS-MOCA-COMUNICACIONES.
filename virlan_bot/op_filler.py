@@ -152,20 +152,62 @@ class ResultadoOP:
     alertas: list[str] = dc_field(default_factory=list)
 
 
-def _set_con_ajuste(ws, rango: str, valor) -> None:
-    """Escribe `valor` en `rango` y activa 'Reducir hasta ajustar'
-    (ShrinkToFit) para que, si el texto no cabe en el ancho de la celda
-    (o del rango combinado), Excel reduzca la letra hasta que quepa en
-    una sola línea dentro del recuadro — en vez de recortarse (celdas
-    sueltas) o desbordarse verticalmente sobre la fila de abajo (celdas
-    combinadas con WrapText), como pasaba antes (regla pedida por el
-    usuario 2026-09-22, verificado visualmente con Marca/Modelo/Color y
-    Dirección de Entrega). WrapText y ShrinkToFit son excluyentes en
-    Excel, por eso se apaga WrapText explícitamente."""
+_RUTA_CALIBRI = "C:/Windows/Fonts/calibri.ttf"
+_FUENTE_MEDIDA = None
+_MARGEN_CELDA_PT = 6.0
+_TAMANO_MINIMO_PT = 6.0
+
+
+def _ancho_texto_pt(texto: str, tamano: float) -> float:
+    """Ancho aproximado en puntos del texto en Calibri (la fuente de la OP)."""
+    global _FUENTE_MEDIDA
+    if _FUENTE_MEDIDA is None and Path(_RUTA_CALIBRI).exists():
+        from PIL import ImageFont
+
+        _FUENTE_MEDIDA = ImageFont.truetype(_RUTA_CALIBRI, 100)
+    if _FUENTE_MEDIDA is None:
+        return len(texto) * tamano * 0.55
+    return _FUENTE_MEDIDA.getlength(texto) * tamano / 100
+
+
+def _set_con_ajuste(ws, rango: str, valor) -> float:
+    """Escribe `valor` en `rango` con un TAMAÑO DE LETRA FIJO que hace caber el
+    texto en una sola línea dentro del recuadro (o del rango combinado), y lo
+    devuelve. Antes se usaba 'Reducir hasta ajustar' (ShrinkToFit), pero ese modo
+    impide que quien revisa cambie el tamaño de letra (pedido del usuario
+    2026-09-23: los archivos deben poder editarse), así que ahora se calcula el
+    tamaño y se deja como un tamaño normal, editable."""
     celda = ws.Range(rango)
     celda.Value = valor
     celda.WrapText = False
-    celda.ShrinkToFit = True
+    celda.ShrinkToFit = False
+    tamano = float(celda.Font.Size or 11)
+    ancho = float(celda.MergeArea.Width) - _MARGEN_CELDA_PT
+    texto = str(valor)
+    while tamano > _TAMANO_MINIMO_PT and _ancho_texto_pt(texto, tamano) > ancho:
+        tamano -= 0.5
+    celda.Font.Size = tamano
+    return tamano
+
+
+# Columnas de la tabla de líneas cuyo formato (tamaño, alineación) debe ser el
+# mismo en todos los renglones (pedido del usuario 2026-09-23). El machote solo
+# trae con el formato "de diseño" el primer renglón; los demás salían con letra
+# más chica y sin alinear.
+_COLUMNAS_FORMATO = ["C", "D", "E", "F", "H", "J", "K", "L", "N", "O", "P", "Q", "S", "T", "U", "V", "X", "Y"]
+
+
+def _unificar_formato_filas(ws) -> None:
+    for col in _COLUMNAS_FORMATO:
+        origen = ws.Range(f"{col}{_PRIMERA_FILA_TABLA}")
+        for fila in range(_PRIMERA_FILA_TABLA + 1, _ULTIMA_FILA_TABLA + 1):
+            destino = ws.Range(f"{col}{fila}")
+            destino.Font.Name = origen.Font.Name
+            destino.Font.Size = origen.Font.Size
+            destino.Font.Bold = origen.Font.Bold
+            destino.HorizontalAlignment = origen.HorizontalAlignment
+            destino.VerticalAlignment = origen.VerticalAlignment
+            destino.ShrinkToFit = False
 
 
 def _es_addon_ctrl(plan_tarifario: str) -> bool:
@@ -350,6 +392,7 @@ def llenar_op(
         wb = excel.Workbooks.Open(str(salida_xlsx.resolve()))
         try:
             ws = wb.Worksheets(_HOJA)
+            _unificar_formato_filas(ws)
 
             # El machote trae la fecha del ejemplo tal cual (valor fijo, no
             # =TODAY()); debe ser la misma fecha de contratación del CONTRATO
@@ -397,8 +440,13 @@ def llenar_op(
 
             bloques_redes = _redes_streaming_por_plan(cliente)
             if bloques_redes:
-                for celda, bloque in zip(_FILAS_OBSERVACIONES_REDES, bloques_redes):
+                tamanos_obs = [
                     _set_con_ajuste(ws, celda, bloque)
+                    for celda, bloque in zip(_FILAS_OBSERVACIONES_REDES, bloques_redes)
+                ]
+                # Mismo tamaño en todas las líneas de Observaciones.
+                for celda in _FILAS_OBSERVACIONES_REDES[: len(tamanos_obs)]:
+                    ws.Range(celda).Font.Size = min(tamanos_obs)
                 if len(bloques_redes) > len(_FILAS_OBSERVACIONES_REDES):
                     resultado.alertas.append(
                         f"El cliente tiene {len(bloques_redes)} combinaciones de "
@@ -414,6 +462,7 @@ def llenar_op(
                 )
 
             fila = _PRIMERA_FILA_TABLA
+            tamanos_columna: dict[str, list[float]] = {"D": [], "E": [], "H": []}
             for linea in cliente.lineas:
                 ciudad_dn = ""
                 if ladas_csv_path:
@@ -428,10 +477,10 @@ def llenar_op(
                 ws.Range(f"C{fila}").Value = 1
                 # Sin lada determinable (ej. SIM con teléfono "NA" por portabilidad)
                 # se pone N/A en vez de dejar la celda vacía.
-                _set_con_ajuste(ws, f"D{fila}", ciudad_dn or "N/A")
-                _set_con_ajuste(ws, f"E{fila}", linea.plan_tarifario)
+                tamanos_columna["D"].append(_set_con_ajuste(ws, f"D{fila}", ciudad_dn or "N/A"))
+                tamanos_columna["E"].append(_set_con_ajuste(ws, f"E{fila}", linea.plan_tarifario))
                 ws.Range(f"F{fila}").Value = linea.plazo_meses
-                _set_con_ajuste(ws, f"H{fila}", linea.marca_modelo_color)
+                tamanos_columna["H"].append(_set_con_ajuste(ws, f"H{fila}", linea.marca_modelo_color))
                 ws.Range(f"T{fila}").Value = linea.telefono
                 ws.Range(f"U{fila}").Value = _modalidad_mpp_cpp(
                     linea.plan_tarifario, linea.modalidad_mpp_cpp
@@ -612,6 +661,13 @@ def llenar_op(
 
                 fila += 1
                 resultado.lineas_escritas += 1
+
+            # Mismo tamaño de letra en todos los renglones de cada columna: el
+            # menor que necesita el texto más largo (regla del usuario 2026-09-23).
+            for col, tamanos in tamanos_columna.items():
+                if tamanos:
+                    for fila_escrita in range(_PRIMERA_FILA_TABLA, fila):
+                        ws.Range(f"{col}{fila_escrita}").Font.Size = min(tamanos)
 
             # Limpiar cualquier fila sobrante que el machote reciclado traía
             # con datos de un cliente anterior (más líneas de las que trae

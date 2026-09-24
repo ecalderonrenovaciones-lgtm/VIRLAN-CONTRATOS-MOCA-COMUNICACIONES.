@@ -32,7 +32,7 @@ from .contrato_fieldmap import cargar_fieldmap
 from .contrato_filler import llenar_contrato
 from .contrato_valores import construir_valores_contrato
 from .eml_reader import extraer_adjuntos
-from .ficha_extractor import extraer_ficha
+from .ficha_extractor import extraer_ficha, quitar_titulos
 from .models import DatosIncompletosError
 from .oferta_comercial_extractor import extraer_oferta_comercial
 from .op_filler import llenar_op
@@ -128,7 +128,9 @@ def procesar(
     carpeta_salida.mkdir(parents=True, exist_ok=True)
 
     if not persona_autorizada and adjuntos.personas_autorizadas:
-        persona_autorizada = " Y ".join(n.upper() for n in adjuntos.personas_autorizadas)
+        persona_autorizada = " Y ".join(
+            quitar_titulos(n).upper() for n in adjuntos.personas_autorizadas
+        )
 
     # Regla del usuario 2026-09-23: la fecha de contratación (CONTRATO y OP) es la
     # fecha de cotejo escrita a mano en el INE_*.pdf. Es manuscrita y no se lee
@@ -280,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.comando == "procesar":
         try:
-            personas = " Y ".join(n.strip().upper() for n in args.persona_autorizada or [] if n.strip())
+            personas = " Y ".join(quitar_titulos(n).upper() for n in args.persona_autorizada or [] if n.strip())
             fecha = _parsear_fecha(args.fecha_contratacion) if args.fecha_contratacion else None
             procesar(args.eml, args.tipo_venta, personas or None, fecha)
         except DatosIncompletosError as e:

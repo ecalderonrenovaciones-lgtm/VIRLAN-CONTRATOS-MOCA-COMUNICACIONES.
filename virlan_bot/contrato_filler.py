@@ -34,7 +34,29 @@ _FONT_ALIASES = {
 }
 
 
+# Fuentes que SÍ se incrustan en el PDF (pedido del usuario 2026-09-23: quien
+# revisa debe poder editar el texto y cambiar el tamaño de letra; con Helvetica
+# sin incrustar los editores de PDF lo impiden o lo sustituyen). Arial y
+# Helvetica miden igual, así que el diseño no cambia. Se incrusta solo el
+# subconjunto de caracteres usados (doc.subset_fonts, requiere fonttools).
+_ARCHIVOS_FUENTE = {
+    "ArialMT": ("ArialInc", "C:/Windows/Fonts/arial.ttf"),
+    "Arial-BoldMT": ("ArialBoldInc", "C:/Windows/Fonts/arialbd.ttf"),
+}
+_FUENTES_INCRUSTADAS: dict[str, tuple[str, "fitz.Font"]] = {}
+
+
+def _registrar_fuentes(page: "fitz.Page") -> None:
+    _FUENTES_INCRUSTADAS.clear()
+    for original, (alias, ruta) in _ARCHIVOS_FUENTE.items():
+        if Path(ruta).exists():
+            page.insert_font(fontname=alias, fontfile=ruta)
+            _FUENTES_INCRUSTADAS[original] = (alias, fitz.Font(fontfile=ruta))
+
+
 def _fuente_pymupdf(fontname: str) -> str:
+    if fontname in _FUENTES_INCRUSTADAS:
+        return _FUENTES_INCRUSTADAS[fontname][0]
     return _FONT_ALIASES.get(fontname, fontname)
 
 
@@ -45,6 +67,8 @@ class ResultadoLlenado:
 
 
 def _ancho_texto(texto: str, fontname: str, fontsize: float) -> float:
+    if fontname in _FUENTES_INCRUSTADAS:
+        return _FUENTES_INCRUSTADAS[fontname][1].text_length(texto, fontsize=fontsize)
     return fitz.get_text_length(texto, fontname=_fuente_pymupdf(fontname), fontsize=fontsize)
 
 
@@ -144,13 +168,13 @@ def llenar_contrato(
 
     for nombre, spec in campos_texto.items():
         if nombre in valores and valores[nombre]:
-            bboxes_a_redactar.append(spec["bbox"])
+            bboxes_a_redactar.append(spec.get("bbox_borrar", spec["bbox"]))
         elif not spec.get("opcional"):
             resultado.campos_omitidos.append(nombre)
             # El machote es un contrato reciclado de otro cliente: un campo sin
             # valor debe quedar EN BLANCO, nunca con el dato del cliente anterior
             # (visto en HERNANDEZ NUÑO: sin teléfono en la ficha salía el del machote).
-            bboxes_a_redactar.append(spec["bbox"])
+            bboxes_a_redactar.append(spec.get("bbox_borrar", spec["bbox"]))
 
     if rfc_cliente:
         bboxes_a_redactar.append(fieldmap["campo_rfc_cliente"]["bbox"])
@@ -169,6 +193,10 @@ def llenar_contrato(
         page.add_redact_annot(fitz.Rect(bbox))
     if bboxes_a_redactar:
         page.apply_redactions()
+
+    # Después de la redacción (que limpia los recursos de la página), para que la
+    # fuente incrustada no se pierda antes de escribir el texto nuevo.
+    _registrar_fuentes(page)
 
     for nombre, spec in campos_texto.items():
         if nombre in valores and valores[nombre]:
@@ -190,6 +218,8 @@ def llenar_contrato(
             )
         _insertar_checkbox(page, checkbox)
 
+    if _FUENTES_INCRUSTADAS:
+        doc.subset_fonts()  # deja solo los caracteres usados (evita ~1.5 MB de fuentes completas)
     Path(salida_pdf).parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(salida_pdf))
     doc.close()

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -36,6 +37,22 @@ def primera_palabra_ciudad(ciudad_region: str) -> str:
     return primera
 
 
+def ciudad_dn_de_region(ciudad_region: str) -> str:
+    """Ciudad DN a partir de Ciudad_Region_Principal. Regla del usuario
+    2026-09-23: 'Ciudad de Mexico' se abrevia CDMX y 'Estado de Mexico' EDOMEX
+    (antes salía solo 'Ciudad'); las ladas 55 y 56 son ambas CDMX. El resto
+    sigue la regla de la primera palabra."""
+    norm = "".join(
+        c for c in unicodedata.normalize("NFD", ciudad_region.strip().upper())
+        if unicodedata.category(c) != "Mn"
+    )
+    if norm.startswith("CIUDAD DE MEXICO"):
+        return "CDMX"
+    if norm.startswith("ESTADO DE MEXICO"):
+        return "EDOMEX"
+    return primera_palabra_ciudad(ciudad_region)
+
+
 def ciudad_dn_por_telefono(telefono: str, csv_path: str | Path) -> str:
     """Devuelve la primera palabra de la ciudad correspondiente a la lada del
     teléfono. Lanza LadaNoEncontradaError si no hay coincidencia — nunca se
@@ -52,7 +69,7 @@ def ciudad_dn_por_telefono(telefono: str, csv_path: str | Path) -> str:
     for largo in (3, 2):
         prefijo = digitos[:largo]
         if prefijo in tabla:
-            ciudades = {primera_palabra_ciudad(c) for c in tabla[prefijo]}
+            ciudades = {ciudad_dn_de_region(c) for c in tabla[prefijo]}
             if len(ciudades) > 1:
                 raise LadaNoEncontradaError(
                     f"La lada {prefijo} tiene varias ciudades posibles en "

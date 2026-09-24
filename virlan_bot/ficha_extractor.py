@@ -88,6 +88,21 @@ def _clasificar_etiqueta(p: str) -> str | None:
     return None
 
 
+# Títulos que NO deben aparecer junto al nombre del representante legal (pedido
+# del usuario 2026-09-23: "solo el nombre completo"). Se quitan solo al INICIO
+# y como palabra completa ('Ingrid' o 'Drake' no se tocan).
+_RE_TITULOS = re.compile(
+    r"^\s*(?:(?:sr|sra|srita|se[nñ]or|se[nñ]ora|lic|licda|ing|dr|dra|arq|mtro|mtra|prof|profa|c\.p)\b\.?\s*)+",
+    re.IGNORECASE,
+)
+
+
+def quitar_titulos(nombre: str) -> str:
+    """'Sr. FRANCISCO OLLIVIER ROMERO' -> 'FRANCISCO OLLIVIER ROMERO'."""
+    limpio = _RE_TITULOS.sub("", nombre or "").strip()
+    return limpio or (nombre or "").strip()
+
+
 def _asignar_domicilio(cliente, raw: str, prefijo: str, nombre: str) -> None:
     """Separa un domicilio de 8 componentes (calle, número, colonia, ciudad,
     municipio, estado, CP, país) en los atributos `<prefijo>_<componente>`."""
@@ -209,7 +224,7 @@ def extraer_ficha(docx_path: str | Path) -> ClienteContrato:
     cliente = ClienteContrato(
         razon_social=razon_social,
         numero_cuenta=numero_cuenta,
-        representante_legal=representante,
+        representante_legal=quitar_titulos(representante),
         rfc=rfc or "",
         telefono=telefono or "",
         correo=correo,
