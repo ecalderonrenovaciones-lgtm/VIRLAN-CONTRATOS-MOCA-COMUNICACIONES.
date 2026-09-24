@@ -21,6 +21,8 @@ elegir uno arbitrariamente.
 
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 
 from ._xlsx_utils import fila_a_dict_por_encabezado, leer_filas
@@ -28,6 +30,17 @@ from .models import ClienteContrato, LineaRenovacion
 
 _CUENTA_KEYS_CONTROL = ("Cuenta/Sub cuenta",)
 _CUENTA_KEYS_SAE = ("Cuenta                          Sub Cuenta", "Cuenta / Sub Cuenta")
+
+
+def _valor_columna(fila: dict[str, str], fragmento: str) -> str:
+    """Valor de la primera columna cuyo encabezado (con espacios raros
+    colapsados) contiene `fragmento`: el encabezado real es 'Modalidad      MPP
+    / CPP' con espacios de largo variable, y por eso la búsqueda por nombre
+    exacto no lo encontraba."""
+    for nombre, valor in fila.items():
+        if fragmento in re.sub(r"\s+", " ", nombre or "").upper():
+            return (valor or "").strip()
+    return ""
 
 
 def _buscar_valor(fila: dict[str, str], posibles_nombres: tuple[str, ...]) -> str | None:
@@ -87,7 +100,7 @@ def _extraer_sae(path: Path, numero_cuenta: str) -> list[LineaRenovacion]:
                 marca_modelo_color=", ".join(
                     p for p in (fila.get("Modelo", ""), fila.get("Color", "")) if p and p.strip().upper() not in ("NA", "N/A")
                 ),
-                modalidad_mpp_cpp=fila.get("Modalidad      MPP / CPP ", "").strip() or None,
+                modalidad_mpp_cpp=_valor_columna(fila, "MPP") or None,
                 addon_extra=fila.get("Addon Extra") or None,
                 redes_sociales=fila.get("REDES SOCIALES") or None,
                 streaming=fila.get("STREAMING") or None,

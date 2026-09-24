@@ -8,6 +8,7 @@ que una persona revise este paquete — es un documento contractual."""
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def _fila_tabla(campo: str, valor: str, origen: str) -> str:
 def generar_paquete_revision(
     cliente: ClienteContrato,
     contrato_pdf: str | Path,
-    op_pdf: str | Path,
+    op_pdf: "str | Path | list[tuple[str, Path]]",
     salida_dir: str | Path,
     alertas_extra: list[str] | None = None,
     ine_pdf: str | Path | None = None,
@@ -48,7 +49,16 @@ def generar_paquete_revision(
     salida_dir.mkdir(parents=True, exist_ok=True)
 
     imagenes_contrato = _renderizar_paginas(Path(contrato_pdf), salida_dir, "contrato")
-    imagenes_op = _renderizar_paginas(Path(op_pdf), salida_dir, "op")
+    # Una sola OP, o varias como [(titulo, ruta_pdf)] (SIM y equipos van separados).
+    ops = op_pdf if isinstance(op_pdf, list) else [("OP", op_pdf)]
+    ops_html = ""
+    for titulo, ruta in ops:
+        prefijo = "op" if len(ops) == 1 else re.sub(r"[^a-z0-9]+", "_", titulo.lower()).strip("_")
+        imgs = "".join(
+            f"<img src='{n}' alt='{html.escape(titulo)} página {i+1}'>"
+            for i, n in enumerate(_renderizar_paginas(Path(ruta), salida_dir, prefijo))
+        )
+        ops_html += f"<h2>{html.escape(titulo)} generada</h2>{imgs}"
 
     # La fecha de cotejo va escrita a mano en el INE: se muestra la imagen para
     # que quien revisa confirme que coincide con la fecha usada.
@@ -89,9 +99,6 @@ def generar_paquete_revision(
     imgs_contrato_html = "".join(
         f"<img src='{n}' alt='CONTRATO página {i+1}'>" for i, n in enumerate(imagenes_contrato)
     )
-    imgs_op_html = "".join(
-        f"<img src='{n}' alt='OP página {i+1}'>" for i, n in enumerate(imagenes_op)
-    )
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8">
@@ -128,8 +135,7 @@ def generar_paquete_revision(
   <h2>CONTRATO generado</h2>
   {imgs_contrato_html}
 
-  <h2>OP generada</h2>
-  {imgs_op_html}
+  {ops_html}
 </body></html>
 """
     ruta_html = salida_dir / "revision.html"

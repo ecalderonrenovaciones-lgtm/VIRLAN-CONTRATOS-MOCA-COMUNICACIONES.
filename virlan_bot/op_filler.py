@@ -210,14 +210,19 @@ def _unificar_formato_filas(ws) -> None:
             destino.ShrinkToFit = False
 
 
-def _es_addon_ctrl(plan_tarifario: str) -> bool:
+def _es_addon_ctrl(plan_tarifario: str, addon_extra: str | None = None) -> bool:
     """Addon CTRL = 'X' (col P) y $50 en Pago mensual de servicios
     adicionales unitario (col S), que luego se suman al número del plan en
     Pago total mensual unitario (col Y). Aplica si el nombre del plan trae
     la palabra 'CTRL', o si trae el sufijo abreviado 'C M'/'CM' (regla
     confirmada por el usuario 2026-09-22: ahí la 'C' ya representa control,
-    igual que en _modalidad_mpp_cpp)."""
+    igual que en _modalidad_mpp_cpp). También aplica si la columna 'Addon Extra'
+    del SAE dice CTRL (2026-09-23, CREA IMPRENTA: plan '$299 C' sin la palabra
+    CTRL pero con Addon Extra = CTRL); verificado en 57 líneas de todos los
+    clientes que esa columna coincide 100% con lo deducido del nombre del plan."""
     texto = plan_tarifario or ""
+    if (addon_extra or "").strip().upper() == "CTRL":
+        return True
     return bool(re.search(r"\bCTRL\b", texto, re.I) or re.search(r"\bC\s*M\b", texto, re.I))
 
 
@@ -462,7 +467,9 @@ def llenar_op(
                 )
 
             fila = _PRIMERA_FILA_TABLA
-            tamanos_columna: dict[str, list[float]] = {"D": [], "E": [], "H": []}
+            # Ciudad DN (col D) NO se unifica: solo la casilla que se desborde baja su
+            # letra hasta caber; las demás conservan el tamaño normal (usuario 2026-09-24).
+            tamanos_columna: dict[str, list[float]] = {"E": [], "H": []}
             for linea in cliente.lineas:
                 ciudad_dn = ""
                 if ladas_csv_path:
@@ -477,7 +484,7 @@ def llenar_op(
                 ws.Range(f"C{fila}").Value = 1
                 # Sin lada determinable (ej. SIM con teléfono "NA" por portabilidad)
                 # se pone N/A en vez de dejar la celda vacía.
-                tamanos_columna["D"].append(_set_con_ajuste(ws, f"D{fila}", ciudad_dn or "N/A"))
+                _set_con_ajuste(ws, f"D{fila}", ciudad_dn or "N/A")
                 tamanos_columna["E"].append(_set_con_ajuste(ws, f"E{fila}", linea.plan_tarifario))
                 ws.Range(f"F{fila}").Value = linea.plazo_meses
                 tamanos_columna["H"].append(_set_con_ajuste(ws, f"H{fila}", linea.marca_modelo_color))
@@ -489,7 +496,7 @@ def llenar_op(
                 ws.Range(f"L{fila}").Value = linea.plazo_meses  # Cuotas = Plazo
 
                 numero_plan = _numero_plan(linea.plan_tarifario)
-                es_ctrl = _es_addon_ctrl(linea.plan_tarifario)
+                es_ctrl = _es_addon_ctrl(linea.plan_tarifario, linea.addon_extra)
 
                 mov_oferta = None
                 if oferta_comercial:

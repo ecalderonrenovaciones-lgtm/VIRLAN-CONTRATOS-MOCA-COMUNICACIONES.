@@ -20,6 +20,7 @@ siendo la carpeta de trabajo real con todo (incluida revision.html).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as _dt
 import hashlib
 import re
@@ -35,6 +36,7 @@ from .eml_reader import extraer_adjuntos
 from .ficha_extractor import extraer_ficha, quitar_titulos
 from .models import DatosIncompletosError
 from .oferta_comercial_extractor import extraer_oferta_comercial
+from .op_filler import _trae_equipo as trae_equipo
 from .op_filler import llenar_op
 from .pdf_optimizer import optimizar_pdf
 from .op_to_pdf import exportar_op_a_pdf
@@ -69,16 +71,41 @@ def _slug(texto: str) -> str:
 # CONTRATOS_TERMINADOS_DIR/<cuenta>_<razón_social>/ en cada corrida, sin
 # las imágenes de previsualización ni revision.html (esos son solo para
 # la revisión humana dentro de salida/, no para el entregable final).
-_ARCHIVOS_TERMINADOS = ["contrato_borrador.pdf", "op_borrador.pdf", "op_borrador.xlsx"]
+# Nombres posibles de las OP (regla del usuario 2026-09-24: SIM y equipos NO se
+# mezclan; si el cliente trae ambos se generan "OP EQUIPOS" y "OP SIM").
+_NOMBRES_OP_CONOCIDOS = ["op_borrador", "OP EQUIPOS", "OP SIM"]
 
 
-def _copiar_a_contratos_terminados(carpeta_salida: Path, nombre_carpeta: str) -> None:
+def _limpiar_op_obsoletas(carpeta: Path, vigentes: list[str]) -> list[str]:
+    """Borra las OP de corridas anteriores que ya no aplican (ej. la OP mezclada
+    'op_borrador' cuando ahora hay 'OP EQUIPOS' y 'OP SIM'); devuelve avisos."""
+    avisos: list[str] = []
+    for nombre in _NOMBRES_OP_CONOCIDOS:
+        if nombre in vigentes:
+            continue
+        for ext in (".pdf", ".xlsx"):
+            viejo = carpeta / f"{nombre}{ext}"
+            if viejo.exists():
+                try:
+                    viejo.unlink()
+                except OSError:
+                    avisos.append(f"No se pudo borrar el archivo obsoleto {viejo} (¿abierto?); bórralo a mano.")
+    if "op_borrador" not in vigentes:
+        for png in carpeta.glob("op_p*.png"):
+            png.unlink(missing_ok=True)
+    return avisos
+
+
+def _copiar_a_contratos_terminados(carpeta_salida: Path, nombre_carpeta: str, nombres_op: list[str]) -> list[str]:
     destino = config.CONTRATOS_TERMINADOS_DIR / nombre_carpeta
     destino.mkdir(parents=True, exist_ok=True)
-    for nombre_archivo in _ARCHIVOS_TERMINADOS:
+    avisos = _limpiar_op_obsoletas(destino, nombres_op)
+    archivos = ["contrato_borrador.pdf"] + [f"{n}{e}" for n in nombres_op for e in (".pdf", ".xlsx")]
+    for nombre_archivo in archivos:
         origen = carpeta_salida / nombre_archivo
         if origen.exists():
             shutil.copy2(origen, destino / nombre_archivo)
+    return avisos
 
 
 def _parsear_fecha(texto: str) -> _dt.date:
@@ -199,23 +226,45 @@ def procesar(
                 f"revisar el formato del PDF manualmente."
             )
 
-    op_xlsx = carpeta_salida / "op_borrador.xlsx"
-    op_pdf = carpeta_salida / "op_borrador.pdf"
-    resultado_op = llenar_op(
-        machote_xlsx=config.MACHOTE_OP_XLSX,
-        salida_xlsx=op_xlsx,
-        cliente=cliente,
-        ladas_csv_path=ladas_csv,
-        tipo_venta=tipo_venta_op,
-        lista_precios_xlsx=lista_precios,
-        calculo_mpe_xlsx=calculo_mpe,
-        oferta_comercial=oferta_comercial,
-        fecha_contratacion=fecha_contratacion,
-    )
-    exportar_op_a_pdf(op_xlsx, op_pdf)
+    # Regla del usuario 2026-09-24: NO se pueden mezclar SIM y equipos en una OP.
+    # Si el cliente trae ambos: dos OP ("OP EQUIPOS" y "OP SIM"), mismo CONTRATO.
+    con_equipo = [l for l in cliente.lineas if trae_equipo(l)]
+    sin_equipo = [l for l in cliente.lineas if not trae_equipo(l)]
+    if con_equipo and sin_equipo:
+        paquetes_op = [("OP EQUIPOS", con_equipo), ("OP SIM", sin_equipo)]
+    else:
+        paquetes_op = [("op_borrador", cliente.lineas)]
+    nombres_op = [n for n, _ in paquetes_op]
+
+    alertas_op: list[str] = []
+    if len(paquetes_op) > 1:
+        alertas_op.append(
+            "El cliente trae SIM y equipos: no se mezclan; se generaron dos OP separadas "
+            "(OP EQUIPOS y OP SIM) con el mismo CONTRATO."
+        )
+    alertas_op += _limpiar_op_obsoletas(carpeta_salida, nombres_op)
+    ops_generadas: list[tuple[str, Path]] = []
+    for nombre_op, lineas_op in paquetes_op:
+        op_xlsx = carpeta_salida / f"{nombre_op}.xlsx"
+        op_pdf = carpeta_salida / f"{nombre_op}.pdf"
+        resultado_op = llenar_op(
+            machote_xlsx=config.MACHOTE_OP_XLSX,
+            salida_xlsx=op_xlsx,
+            cliente=dataclasses.replace(cliente, lineas=lineas_op),
+            ladas_csv_path=ladas_csv,
+            tipo_venta=tipo_venta_op,
+            lista_precios_xlsx=lista_precios,
+            calculo_mpe_xlsx=calculo_mpe,
+            oferta_comercial=oferta_comercial,
+            fecha_contratacion=fecha_contratacion,
+        )
+        exportar_op_a_pdf(op_xlsx, op_pdf)
+        prefijo = f"[{nombre_op}] " if len(paquetes_op) > 1 else ""
+        alertas_op += [prefijo + a for a in resultado_op.alertas]
+        ops_generadas.append((nombre_op, op_pdf))
 
     alertas_peso: list[str] = []
-    for pdf in (contrato_pdf, op_pdf):
+    for pdf in [contrato_pdf] + [p for _, p in ops_generadas]:
         opt = optimizar_pdf(pdf, config.LIMITE_PDF_KB)
         print(f"Tamaño {opt.archivo}: {opt.kb_antes} KB -> {opt.kb_despues} KB (límite {config.LIMITE_PDF_KB} KB)")
         if opt.alerta:
@@ -227,24 +276,25 @@ def procesar(
         + alertas_contrato
         + resultado_contrato.campos_omitidos
         + [f"CONTRATO — desborde: {d}" for d in resultado_contrato.desbordes]
-        + resultado_op.alertas
+        + alertas_op
         + alertas_peso
     )
 
     ruta_revision = generar_paquete_revision(
         cliente=cliente,
         contrato_pdf=contrato_pdf,
-        op_pdf=op_pdf,
+        op_pdf=ops_generadas if len(ops_generadas) > 1 else ops_generadas[0][1],
         salida_dir=carpeta_salida,
         alertas_extra=todas_alertas,
         ine_pdf=adjuntos.ine_pdf,
         fecha_contratacion=f"{fecha_contratacion:%d/%m/%Y}",
     )
 
-    _copiar_a_contratos_terminados(carpeta_salida, carpeta_salida.name)
+    todas_alertas += _copiar_a_contratos_terminados(carpeta_salida, carpeta_salida.name, nombres_op)
 
     print(f"CONTRATO generado: {contrato_pdf}")
-    print(f"OP generada: {op_pdf}")
+    for nombre_op, ruta_op in ops_generadas:
+        print(f"{nombre_op} generada: {ruta_op}")
     print(f"Paquete de revisión: {ruta_revision}")
     print(f"Copia en CONTRATOS TERMINADOS: {config.CONTRATOS_TERMINADOS_DIR / carpeta_salida.name}")
     print(f"Total de alertas: {len(cliente.alertas) + len(todas_alertas)} — revisar {ruta_revision.name} antes de enviar.")
