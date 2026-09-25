@@ -10,3 +10,11 @@ salida/_tmp_adjuntos/
 .idea/
 Thumbs.db
 .DS_Store
+
+# pytest
+.pytest_cache/
+
+# Resultados por cliente: contienen INE (imágenes), CURP y datos personales -> no se versionan
+# (las carpetas antiguas ya versionadas siguen rastreadas; esto solo evita agregar las nuevas)
+salida/*/
+!salida/.gitkeep

@@ -10,6 +10,7 @@ su lugar (ver op_filler.py).
 
 from __future__ import annotations
 
+import html
 import re
 import zipfile
 from pathlib import Path
@@ -28,7 +29,7 @@ def _shared_strings(z: zipfile.ZipFile) -> list[str]:
     out = []
     for si in re.findall(r"<si>(.*?)</si>", xml, re.S):
         textos = re.findall(r"<t[^>]*>([^<]*)</t>", si)
-        out.append("".join(textos))
+        out.append(html.unescape("".join(textos)))   # &amp; -> &
     return out
 
 
@@ -54,6 +55,11 @@ def leer_filas(xlsx_path: str | Path, sheet_index: int = 1) -> dict[int, dict[st
             t = t_match.group(1) if t_match else None
             v_match = _VALUE_RE.search(inner)
             val = v_match.group(1) if v_match else ""
+            if t == "inlineStr":
+                # cadenas en línea (openpyxl, pandas, Excel Online...): <is><t>texto</t></is>
+                val = html.unescape("".join(re.findall(r"<t[^>]*>([^<]*)</t>", inner)))
+            elif t == "str":
+                val = html.unescape(val)
             if t == "s" and val:
                 try:
                     val = shared[int(val)]

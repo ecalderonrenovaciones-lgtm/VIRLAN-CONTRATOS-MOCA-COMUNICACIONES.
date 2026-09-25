@@ -41,12 +41,15 @@ lo traen y no se reprocesan):
       "ENTREGA") encabezan el bloque de cada domicilio; cada domicilio se
       asigna al bloque en que aparece, sin depender de su orden.
 
-Si no se puede identificar alguno de los campos requeridos (domicilio, RFC,
-teléfono, correo), se lanza DatosIncompletosError en vez de adivinar.
+Si no se puede identificar el domicilio o el correo (o si el envío es a ENTREGA y
+no hay domicilio de entrega), se lanza DatosIncompletosError en vez de adivinar. El
+RFC (fuente oficial: LAYOUT DE VINCULACION) y el teléfono pueden faltar en la ficha:
+quedan en blanco y se avisa. Los caracteres XML (&amp; &lt;...) se desescapan.
 """
 
 from __future__ import annotations
 
+import html
 import re
 import unicodedata
 import zipfile
@@ -127,7 +130,7 @@ def _parrafos(docx_path: Path) -> list[str]:
         xml = z.read("word/document.xml").decode("utf-8")
     parrafos = []
     for p in _W_P.findall(xml):
-        texto = "".join(_W_T.findall(p))
+        texto = html.unescape("".join(_W_T.findall(p)))   # Word escribe & como &amp;
         parrafos.append(texto)
     return parrafos
 

@@ -19,6 +19,8 @@ FARMACIAS que ya se había procesado como .eml): mismos 13 adjuntos."""
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 from dataclasses import dataclass
 from email import policy
@@ -121,6 +123,22 @@ def extraer_personas_autorizadas(cuerpo: str) -> list[str]:
     return [n for n in nombres if len(n) > 2]
 
 
+_MAX_RUTA = 240   # Windows limita las rutas a 260 caracteres
+
+
+def _nombre_seguro(destino_dir: Path, nombre: str) -> str:
+    """Acorta (con un hash para no chocar) los nombres de adjuntos tan largos que
+    harían pasar la ruta del límite de 260 caracteres de Windows. La clasificación
+    del adjunto se sigue haciendo con el nombre ORIGINAL."""
+    permitido = _MAX_RUTA - len(str(destino_dir.resolve())) - 1
+    if len(nombre) <= permitido:
+        return nombre
+    raiz, ext = os.path.splitext(nombre)
+    ext = ext[:10]
+    corte = max(8, permitido - len(ext) - 9)
+    return f"{raiz[:corte]}_{hashlib.sha1(nombre.encode('utf-8')).hexdigest()[:8]}{ext}"
+
+
 def _clasificar_adjuntos(
     correo_path: Path,
     destino_dir: Path,
@@ -130,7 +148,7 @@ def _clasificar_adjuntos(
 ) -> AdjuntosCorreo:
     resultado = AdjuntosCorreo(asunto=asunto, personas_autorizadas=extraer_personas_autorizadas(cuerpo))
     for nombre, datos in crudos:
-        destino = destino_dir / nombre
+        destino = destino_dir / _nombre_seguro(destino_dir, nombre)
         with open(destino, "wb") as out:
             out.write(datos)
 

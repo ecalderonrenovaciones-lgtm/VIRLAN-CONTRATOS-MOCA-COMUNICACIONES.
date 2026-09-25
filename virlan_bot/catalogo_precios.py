@@ -111,7 +111,8 @@ def buscar_precio_lista(
     try:
         ws = wb[_HOJA]
         vigentes = []  # (familia_normalizada, PrecioEquipo)
-        for fila in ws.iter_rows(min_row=_FILA_ENCABEZADOS + 1):
+        # enumerate: la 1ª celda de una fila vacía es EmptyCell y no tiene .row
+        for num_fila, fila in enumerate(ws.iter_rows(min_row=_FILA_ENCABEZADOS + 1), start=_FILA_ENCABEZADOS + 1):
             familia = fila[_COL_FAMILIA - 1].value
             if not familia:
                 continue
@@ -135,7 +136,7 @@ def buscar_precio_lista(
                 if isinstance(valor_diferencial, (int, float)):
                     diferencial = float(valor_diferencial)
             candidato = PrecioEquipo(
-                str(familia), float(precio), fila[0].row, diferencial_equipo=diferencial
+                str(familia), float(precio), num_fila, diferencial_equipo=diferencial
             )
             vigentes.append((familia_norm, candidato))
     finally:

@@ -32,6 +32,14 @@ _CUENTA_KEYS_CONTROL = ("Cuenta/Sub cuenta",)
 _CUENTA_KEYS_SAE = ("Cuenta                          Sub Cuenta", "Cuenta / Sub Cuenta")
 
 
+def _solo_digitos(texto: str) -> str:
+    return re.sub(r"\D", "", texto or "")
+
+
+def _es_telefono(texto: str) -> bool:
+    return len(_solo_digitos(texto)) == 10
+
+
 def _valor_columna(fila: dict[str, str], fragmento: str) -> str:
     """Valor de la primera columna cuyo encabezado (con espacios raros
     colapsados) contiene `fragmento`: el encabezado real es 'Modalidad      MPP
@@ -133,7 +141,30 @@ def extraer_lineas_renovacion(
                 f"y SAE trae {len(lineas_sae)} línea(s) para la cuenta "
                 f"{cliente.numero_cuenta}; revisar manualmente."
             )
-        for a, b in zip(lineas_control, lineas_sae):
+        # Se empareja por TELÉFONO (control y SAE pueden traer las líneas en distinto
+        # orden); solo las líneas sin teléfono válido (SIM por portabilidad, 'NA') se
+        # emparejan por posición. Emparejar todo por posición asignaba el costo de
+        # equipo a la línea equivocada cuando el orden difería.
+        por_telefono = {}
+        for a in lineas_control:
+            if _es_telefono(a.telefono):
+                por_telefono.setdefault(_solo_digitos(a.telefono), a)
+        pares = []
+        for i, b in enumerate(lineas_sae):
+            if _es_telefono(b.telefono):
+                a = por_telefono.get(_solo_digitos(b.telefono))
+                if a is None:
+                    cliente.agregar_alerta(
+                        f"La línea {b.telefono} de SAE no aparece en control de renovacion.xlsx; "
+                        f"su 'Costo de Equipo' no se pudo determinar de ahí."
+                    )
+                    continue
+            else:
+                a = lineas_control[i] if i < len(lineas_control) else None
+                if a is None:
+                    continue
+            pares.append((a, b))
+        for a, b in pares:
             if a.plan_tarifario != b.plan_tarifario or a.plazo_meses != b.plazo_meses:
                 cliente.agregar_alerta(
                     f"Discrepancia entre control de renovacion.xlsx "

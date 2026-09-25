@@ -45,12 +45,6 @@ from .review import generar_paquete_revision
 from .tipo_contratacion import MAPA_TIPO, detectar_tipo_desde_asunto
 from .vinculacion_extractor import extraer_vinculacion
 
-_CHECKBOXES_COMUNES = [
-    "aviso_privacidad_acepto",
-    "autorizo_factura_correo_acepto",
-    "tipo_plazo_minimo",
-]
-
 # Casillas de la fila de Domicilio Fiscal según a qué domicilio se envía el
 # paquete (regla del usuario 2026-09-23): FISCAL => 'Dom. Entrega' y
 # 'Correspondencia' de la fila fiscal, como siempre; ENTREGA => se quitan esas
@@ -100,6 +94,19 @@ def _limpiar_op_obsoletas(carpeta: Path, vigentes: list[str]) -> list[str]:
     return avisos
 
 
+def _copiar_archivo(origen: Path, destino: Path) -> str | None:
+    """Copia un archivo; si está abierto en Acrobat/Excel (PermissionError, WinError 32)
+    NO corta la corrida: devuelve un aviso para revision.html."""
+    try:
+        shutil.copy2(origen, destino)
+    except OSError as e:
+        return (
+            f"No se pudo copiar {origen.name} a CONTRATOS TERMINADOS: el archivo de destino está "
+            f"abierto en otro programa (Acrobat/Excel). Ciérralo y vuelve a copiarlo desde salida/. ({e})"
+        )
+    return None
+
+
 def _copiar_a_contratos_terminados(carpeta_salida: Path, nombre_carpeta: str, nombres_op: list[str]) -> list[str]:
     destino = config.CONTRATOS_TERMINADOS_DIR / nombre_carpeta
     destino.mkdir(parents=True, exist_ok=True)
@@ -108,7 +115,9 @@ def _copiar_a_contratos_terminados(carpeta_salida: Path, nombre_carpeta: str, no
     for nombre_archivo in archivos:
         origen = carpeta_salida / nombre_archivo
         if origen.exists():
-            shutil.copy2(origen, destino / nombre_archivo)
+            aviso = _copiar_archivo(origen, destino / nombre_archivo)
+            if aviso:
+                avisos.append(aviso)
     return avisos
 
 
@@ -236,6 +245,12 @@ def procesar(
             + ([opt.alerta] if opt.alerta else [])
             + ["Corrida SOLO CONTRATO: las OP no se regeneraron (se muestran las que ya existían)."]
         )
+        destino = config.CONTRATOS_TERMINADOS_DIR / carpeta_salida.name
+        destino.mkdir(parents=True, exist_ok=True)
+        aviso_copia = _copiar_archivo(contrato_pdf, destino / "contrato_borrador.pdf")
+        if aviso_copia:
+            alertas_solo.append(aviso_copia)
+            print(f"AVISO: {aviso_copia}", file=sys.stderr)
         ruta_revision = generar_paquete_revision(
             cliente=cliente,
             contrato_pdf=contrato_pdf,
@@ -245,9 +260,6 @@ def procesar(
             ine_pdf=adjuntos.ine_pdf,
             fecha_contratacion=f"{fecha_contratacion:%d/%m/%Y}",
         )
-        destino = config.CONTRATOS_TERMINADOS_DIR / carpeta_salida.name
-        destino.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(contrato_pdf, destino / "contrato_borrador.pdf")
         print(f"CONTRATO generado: {contrato_pdf}")
         print(f"Copia en CONTRATOS TERMINADOS: {destino / 'contrato_borrador.pdf'}")
         return ruta_revision
@@ -337,6 +349,11 @@ def procesar(
         + alertas_peso
     )
 
+    avisos_copia = _copiar_a_contratos_terminados(carpeta_salida, carpeta_salida.name, nombres_op)
+    for aviso in avisos_copia:
+        print(f"AVISO: {aviso}", file=sys.stderr)
+    todas_alertas += avisos_copia
+
     ruta_revision = generar_paquete_revision(
         cliente=cliente,
         contrato_pdf=contrato_pdf,
@@ -346,8 +363,6 @@ def procesar(
         ine_pdf=adjuntos.ine_pdf,
         fecha_contratacion=f"{fecha_contratacion:%d/%m/%Y}",
     )
-
-    todas_alertas += _copiar_a_contratos_terminados(carpeta_salida, carpeta_salida.name, nombres_op)
 
     print(f"CONTRATO generado: {contrato_pdf}")
     for nombre_op, ruta_op in ops_generadas:
@@ -427,6 +442,14 @@ def main(argv: list[str] | None = None) -> int:
             procesar(args.eml, args.tipo_venta, personas or None, fecha, args.sufijo, args.solo_contrato, vendedor)
         except DatosIncompletosError as e:
             print(f"ERROR — datos incompletos: {e}", file=sys.stderr)
+            return 1
+        except PermissionError as e:
+            archivo = e.filename or str(e)
+            print(
+                f"ERROR — el archivo '{archivo}' está en uso (¿abierto en Acrobat o Excel?). "
+                f"Cierra el archivo y vuelve a correr el comando.",
+                file=sys.stderr,
+            )
             return 1
     return 0
 

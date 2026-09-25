@@ -62,7 +62,7 @@ def calcular_mpe(
     try:
         ws = wb[_HOJA]
         candidatos = []  # (modelo_norm, (precio_base, fila))
-        for fila in ws.iter_rows(min_row=2):
+        for num_fila, fila in enumerate(ws.iter_rows(min_row=2), start=2):
             modelo = fila[_COL_MODELO - 1].value
             if not modelo:
                 continue
@@ -70,7 +70,7 @@ def calcular_mpe(
             precio_base = fila[_COL_PRECIO_BASE - 1].value
             if precio_base is None:
                 continue
-            candidatos.append((modelo_norm, (float(precio_base), fila[0].row)))
+            candidatos.append((modelo_norm, (float(precio_base), num_fila)))
     finally:
         wb.close()
 
